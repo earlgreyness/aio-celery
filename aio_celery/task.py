@@ -18,7 +18,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
-class AsyncioTask:
+class Task:
     message: IncomingMessage
     args: tuple[Any, ...]
     kwargs: dict[str, Any]
@@ -28,7 +28,7 @@ class AsyncioTask:
     app: Celery
 
     redis_client: Optional["redis.asyncio.Redis"] = None
-    toolbox: dict[str, Any] = dataclasses.field(default_factory=dict)
+    context: dict[str, Any] = dataclasses.field(default_factory=dict)
 
     @property
     def task_id(self) -> str:
@@ -51,7 +51,7 @@ class AsyncioTask:
         message: IncomingMessage,
         *,
         app: Celery,
-    ) -> "AsyncioTask":
+    ) -> "Task":
         args, kwargs, options = json.loads(message.body)
         callbacks, errbacks, chain, chord = (
             options["callbacks"],

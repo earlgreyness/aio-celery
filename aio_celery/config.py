@@ -1,3 +1,4 @@
+import dataclasses
 import datetime
 from dataclasses import dataclass
 from typing import Any
@@ -25,5 +26,8 @@ class DefaultConfig:
     redis_pool_size: int = 50
 
     def update(self, **options: Any) -> None:
+        fields = {f.name for f in dataclasses.fields(self.__class__)}
         for k, v in options.items():
+            if k not in fields:
+                raise ValueError(f"Unknown configuration option: {k!r}")
             setattr(self, k, v)

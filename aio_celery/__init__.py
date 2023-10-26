@@ -1,10 +1,10 @@
 from .app import Celery
-from .task import AsyncioTask, RetryRequested
+from .task import RetryRequested, Task
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = (
     "Celery",
-    "AsyncioTask",
     "RetryRequested",
+    "Task",
 )

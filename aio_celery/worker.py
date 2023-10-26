@@ -17,8 +17,8 @@ from yarl import URL
 from .annotated_task import AnnotatedTask
 from .app import Celery
 from .task import (
-    AsyncioTask,
     RetryRequested,
+    Task,
 )
 
 BANNER = """\
@@ -35,7 +35,7 @@ BANNER = """\
 LOGGER = logging.getLogger(__name__)
 
 
-async def _sleep_if_necessary(task: AsyncioTask) -> None:
+async def _sleep_if_necessary(task: Task) -> None:
     eta: datetime.datetime | None = task.eta
     if eta is None:
         return
@@ -46,7 +46,7 @@ async def _sleep_if_necessary(task: AsyncioTask) -> None:
 
 
 async def _handle_task_result(
-    task: AsyncioTask,
+    task: Task,
     annotated_task: AnnotatedTask,
     result: Any,
 ) -> None:
@@ -67,7 +67,7 @@ async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
     task_kwargs = None
     async with message.process():
         try:
-            task = AsyncioTask.from_raw_message(message, app=app)
+            task = Task.from_raw_message(message, app=app)
             task_id = task.task_id
             task_name = task.task_name
             task_args = task.args
@@ -82,9 +82,9 @@ async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
             annotated_task = app._get_annotated_task(task.task_name)
             await _sleep_if_necessary(task)
             try:
-                async with app.provide_complete_task_resources() as resources:
+                async with app._provide_task_resources() as resources:
                     task.redis_client = resources.redis_client_celery
-                    task.toolbox = resources.toolbox
+                    task.context = resources.context
                     args = (task, *task.args) if annotated_task.bind else task.args
                     async with asyncio.timeout(task.task_soft_time_limit):
                         result = await annotated_task.fn(*args, **task.kwargs)
@@ -111,12 +111,11 @@ async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
             LOGGER.info("[%s] Task completed", task.task_id)
         except Exception as err:
             LOGGER.exception(
-                "[%s] Unexpected error happened: [%s] args=%r, kwargs=%r: type=%r repr=%r",
+                "[%s] Unexpected error happened: [%s] args=%r, kwargs=%r: repr=%r",
                 task_id,
                 task_name,
                 task_args,
                 task_kwargs,
-                type(err),
                 err,
             )
             raise
