@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.black]
+target-version = ["py311"]
+
+[tool.ruff]
+extend-select = [
+#    "A",
+#    "ANN",
+    "ARG",
+    "ASYNC",
+    "B",
+    "C4",
+    "COM",
+#    "DTZ",
+    "ERA",
+    "I",
+    "ICN",
+    "ISC",
+    "PIE",
+#    "PL",
+    "RET",
+    "RSE",
+    "RUF",
+    "Q",
+#    "S",
+    "SIM",
+    "TID",
+    "W",
+]
+ignore = [
+    "E501",
+]
