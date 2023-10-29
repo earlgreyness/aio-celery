@@ -135,7 +135,7 @@ async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
                     )
                     await app._publish(next_message, routing_key=next_routing_key)
             logger.info(
-                "Task %s[%s] succeeded in %ss: %r",
+                "Task %s[%s] succeeded in %.6fs: %r",
                 task.task_name,
                 task.task_id,
                 time.monotonic() - timestamp_start,
