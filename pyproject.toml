@@ -4,29 +4,30 @@ build-backend = "setuptools.build_meta"
 
 [tool.black]
 preview = true
-target-version = ["py311"]
+target-version = ["py37", "py38", "py39", "py310", "py311"]
+
+[tool.mypy]
+strict = true
 
 [tool.ruff]
 extend-select = [
-#    "A",
-#    "ANN",
+    "A",
     "ARG",
     "ASYNC",
     "B",
     "C4",
     "COM",
-#    "DTZ",
+    "DTZ",
     "ERA",
     "I",
     "ICN",
     "ISC",
     "PIE",
-#    "PL",
+    "PL",
     "RET",
     "RSE",
     "RUF",
     "Q",
-#    "S",
     "SIM",
     "TID",
     "W",

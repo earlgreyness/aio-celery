@@ -1,12 +1,20 @@
+import asyncio
 import json
-from typing import TYPE_CHECKING, Any
+import time
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from .app import Celery
+from .exceptions import TimeoutError
 
 
 class AsyncResult:
-    def __init__(self, id: str, *, app: "Celery") -> None:
+    def __init__(
+        self,
+        id: str,  # noqa: A002
+        *,
+        app: "Celery",
+    ) -> None:
         self.id = id
         self.task_id = id
         self._cache = None
@@ -35,3 +43,15 @@ class AsyncResult:
     @property
     async def state(self) -> str:
         return (await self._get_task_meta())["status"]
+
+    async def get(self, timeout: Optional[float] = None, interval: float = 0.5) -> Any:
+        """Wait until task is ready, and return its result."""
+
+        value = await self._get_task_meta()
+        start = time.monotonic()
+        while value == {"result": None, "status": "PENDING"}:
+            await asyncio.sleep(interval)
+            if timeout is not None and (time.monotonic() - start) > timeout:
+                raise TimeoutError("The operation timed out.")
+            value = await self._get_task_meta()
+        return value["result"]

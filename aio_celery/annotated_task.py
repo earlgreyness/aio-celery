@@ -21,7 +21,8 @@ class AnnotatedTask:
         return self.fn(*args, **kwargs)
 
     async def apply_async(self, **options: Any) -> AsyncResult:
-        return await self.app.send_task(self.task_name, **options)
+        options.setdefault("name", self.task_name)
+        return await self.app.send_task(**options)
 
     async def delay(self, *args: Any, **kwargs: Any) -> AsyncResult:
         return await self.apply_async(args=args, kwargs=kwargs)

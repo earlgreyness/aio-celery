@@ -14,7 +14,7 @@ from aio_pika import IncomingMessage, Message
 from .amqp import create_task_message
 from .app import Celery
 
-LOGGER = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -84,7 +84,7 @@ class Task:
         _finalize: bool = False,
     ):
         if self.redis_client is None:
-            LOGGER.debug("Result backend has not been enabled")
+            logger.debug("Result backend has not been enabled")
             return
         if _finalize:
             # do not update if result already in redis
@@ -98,7 +98,9 @@ class Task:
             "task_id": self.task_id,
         }
         if _finalize:
-            payload["date_done"] = datetime.datetime.utcnow().isoformat()
+            payload["date_done"] = (
+                datetime.datetime.utcnow().isoformat()  # noqa: DTZ003
+            )
         if self.message.headers["group"] is not None:
             payload["group_id"] = self.message.headers["group"]
         if self.message.headers["parent_id"] is not None:

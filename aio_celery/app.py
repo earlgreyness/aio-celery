@@ -1,4 +1,5 @@
 import contextlib
+import logging
 import sys
 import uuid
 from dataclasses import dataclass
@@ -15,6 +16,8 @@ from .backend import create_redis_pool
 from .config import DefaultConfig
 from .result import AsyncResult
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class _CompleteTaskResources:
@@ -23,8 +26,7 @@ class _CompleteTaskResources:
 
 
 class Celery:
-    def __init__(self, name: Optional[str] = None) -> None:
-        self.name = name
+    def __init__(self) -> None:
         self.conf = DefaultConfig()
         self._tasks_registry: dict[str, AnnotatedTask] = {}
         self._app_context: Any = None
@@ -57,7 +59,10 @@ class Celery:
                 )
             async with self._setup_app_context() as context:
                 self._app_context = context
-                yield
+                try:
+                    yield
+                finally:
+                    logger.warning("Shutting down application.")
 
     @contextlib.asynccontextmanager
     async def _provide_task_resources(
@@ -85,7 +90,7 @@ class Celery:
         ):
             def decorator(fn):
                 if name is None:
-                    task_name = _gen_task_name(self, fn.__name__, fn.__module__)
+                    task_name = _gen_task_name(fn.__name__, fn.__module__)
                 else:
                     task_name = name
                 annotated_task = AnnotatedTask(
@@ -120,9 +125,10 @@ class Celery:
     def AsyncResult(self, task_id: str) -> AsyncResult:
         return AsyncResult(task_id, app=self)
 
-    async def send_task(
+    async def send_task(  # noqa: PLR0913
         self,
         name: str,
+        *,
         args: Optional[tuple[Any, ...]] = None,
         kwargs: Optional[dict[str, Any]] = None,
         countdown: Optional[int] = None,
@@ -131,6 +137,8 @@ class Celery:
         queue: Optional[str] = None,
     ) -> AsyncResult:
         task_id = task_id or str(uuid.uuid4())
+        routing_key = queue or self.conf.task_default_queue
+        logger.info("Sending task %s[%s] to queue %r ...", name, task_id, routing_key)
         await self._publish(
             create_task_message(
                 task_id=task_id,
@@ -140,7 +148,7 @@ class Celery:
                 priority=priority,
                 countdown=countdown,
             ),
-            routing_key=queue or self.conf.task_default_queue,
+            routing_key=routing_key,
         )
         return self.AsyncResult(task_id)
 
@@ -158,12 +166,10 @@ async def _setup_nothing() -> AsyncIterator[None]:
     yield None
 
 
-def _gen_task_name(app: Celery, name: str, module_name: str) -> str:
+def _gen_task_name(name: str, module_name: str) -> str:
     """Generate task name from name/module pair."""
     module_name = module_name or "__main__"
     module = sys.modules[module_name]
     if module is not None:
         module_name = module.__name__
-    if module_name == "__main__" and app.name:
-        return ".".join([app.name, name])
     return ".".join(p for p in (module_name, name) if p)

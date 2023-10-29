@@ -20,7 +20,7 @@ class DefaultConfig:
     task_queue_max_priority: int = 5
 
     # Broker Settings
-    broker_url: str = "pyamqp://guest:guest@localhost:5672//"
+    broker_url: str = "amqp://guest:guest@localhost:5672//"
 
     # Specific
     redis_pool_size: int = 50

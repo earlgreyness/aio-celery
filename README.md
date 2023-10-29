@@ -11,8 +11,9 @@ Quoting Celery [documentation](https://docs.celeryq.dev/en/latest/getting-starte
 
 > Celery is written in Python, but the protocol can be implemented in any language.
 
-And aio-celery does exactly this, it (re)implements Celery protocol (in Python)
-in order to unlock access to asyncio tasks and workers. 
+And aio-celery does exactly this, it (re)implements
+[Celery Message Protocol](https://docs.celeryq.dev/en/latest/internals/protocol.html)
+(in Python) in order to unlock access to asyncio tasks and workers. 
 
 The most notable feature of aio-celery is that it does not depend on Celery codebase.
 It is written completely from scratch as a thin wrapper around [aio-pika](https://github.com/mosquito/aio-pika)
@@ -59,15 +60,15 @@ class and attribute names
 
 Installation
 ------------
-Install and update using [pip](https://pip.pypa.io/en/stable/getting-started/):
+Install using [pip](https://pip.pypa.io/en/stable/getting-started/):
 
 ```bash
-pip install -U aio-celery
+pip install aio-celery
 ```
 
 If you intend to use Redis result backend for storing task results, run this command:
 ```bash
-pip install -U aio-celery[redis]
+pip install aio-celery[redis]
 ```
 
 Usage
@@ -80,7 +81,7 @@ from aio_celery import Celery
 
 app = Celery()
 
-@app.task
+@app.task(name="add-two-numbers")
 async def add(a, b):
     await asyncio.sleep(5)
     return a + b
@@ -113,8 +114,7 @@ The last script concurrently publishes 50000 messages to RabbitMQ. It takes abou
 with gives average publishing rate of about 6000 messages per second.
 
 
-Advanced Example
-----------------
+### Advanced Example
 
 ```python
 from aio_celery import Celery
@@ -130,8 +130,7 @@ async def do():
     value = await result.get(timeout=10)
 ```
 
-Adding context
---------------
+### Adding context
 
 
 ```python
@@ -154,3 +153,26 @@ async def get_postgres_version():
     return version
 
 ```
+
+References
+----------
+
+### Similar Projects
+
+https://github.com/cr0hn/aiotasks
+
+https://github.com/the-wondersmith/celery-aio-pool
+
+https://github.com/kai3341/celery-pool-asyncio
+
+https://github.com/taskiq-python/taskiq
+
+### Discussions
+
+https://github.com/celery/celery/issues/3884
+
+https://github.com/celery/celery/issues/7874
+
+https://github.com/anomaly/lab-python-server/issues/21
+
+https://github.com/anomaly/lab-python-server/issues/32

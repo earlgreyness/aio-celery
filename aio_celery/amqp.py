@@ -5,7 +5,7 @@ from typing import Any, Optional
 from aio_pika import DeliveryMode, Message
 
 
-def create_task_message(
+def create_task_message(  # noqa: PLR0913
     *,
     task_id: str,
     task_name: str,
@@ -24,6 +24,7 @@ def create_task_message(
         eta = (
             datetime.datetime.now().astimezone() + datetime.timedelta(seconds=countdown)
         ).isoformat()
+    # https://docs.celeryq.dev/en/latest/internals/protocol.html
     headers = {
         "argsrepr": repr(args),
         "eta": eta,

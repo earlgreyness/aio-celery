@@ -1,9 +1,12 @@
 import argparse
 import asyncio
+import logging
 import sys
 
 from . import __version__
 from .worker import run
+
+MAX_AMQP_PREFETCH_COUNT = 65535
 
 
 def main() -> None:
@@ -59,6 +62,13 @@ def main() -> None:
         "--queues",
         help="Comma separated list of queues",
     )
+    worker.add_argument(
+        "-l",
+        "--loglevel",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "FATAL"],
+        default="INFO",
+        help="Logging level",
+    )
 
     args = parser.parse_args()
 
@@ -70,7 +80,7 @@ def main() -> None:
         parser.print_help()
         return
 
-    if not (0 < args.concurrency <= 65535):
+    if not (0 < args.concurrency <= MAX_AMQP_PREFETCH_COUNT):
         print(
             "concurrency must be between 1 and 65535 "
             "(latter is maximum AMQP 0-9-1 prefetch count)",
@@ -78,7 +88,10 @@ def main() -> None:
         )
         sys.exit(2)
 
-    asyncio.run(run(args))
+    try:
+        asyncio.run(run(args))
+    except KeyboardInterrupt:
+        logging.getLogger(__name__).warning("Worker process interrupted.")
 
 
 if __name__ == "__main__":

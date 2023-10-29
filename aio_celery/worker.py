@@ -8,6 +8,7 @@ import importlib
 import logging
 import os
 import sys
+import time
 import urllib.parse
 from typing import Any
 
@@ -32,7 +33,7 @@ BANNER = """\
 {queues}
 """
 
-LOGGER = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 async def _sleep_if_necessary(task: Task) -> None:
@@ -41,7 +42,7 @@ async def _sleep_if_necessary(task: Task) -> None:
         return
     now = datetime.datetime.now().astimezone()
     if eta > now:
-        LOGGER.info("[%s] Sleeping until %s...", task.task_id, eta)
+        logger.info("[%s] Sleeping until %s...", task.task_id, eta)
         await asyncio.sleep((eta - now).total_seconds())
 
 
@@ -50,7 +51,6 @@ async def _handle_task_result(
     annotated_task: AnnotatedTask,
     result: Any,
 ) -> None:
-    LOGGER.info("[%s] Task result: %r", task.task_id, result)
     if (
         task.app.conf.task_ignore_result
         or annotated_task.ignore_result
@@ -61,25 +61,51 @@ async def _handle_task_result(
 
 
 async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
+    timestamp_start = time.monotonic()
     task_id = None
     task_name = None
     task_args = None
     task_kwargs = None
-    async with message.process():
-        try:
+    try:
+        async with message.process(ignore_processed=True):
             task = Task.from_raw_message(message, app=app)
             task_id = task.task_id
             task_name = task.task_name
             task_args = task.args
             task_kwargs = task.kwargs
-            LOGGER.info(
-                "[%s] Task received: %r, args=%r, kwargs=%r",
-                task.task_id,
-                task.task_name,
-                task.args,
-                task.kwargs,
-            )
-            annotated_task = app._get_annotated_task(task.task_name)
+            logger.info("Task %s[%s] received", task.task_name, task.task_id)
+            try:
+                annotated_task = app._get_annotated_task(task.task_name)
+            except KeyError:
+                logger.exception(
+                    "Received unregistered task of type %r\n"
+                    "The message has been ignored and discarded.\n\n"
+                    "Did you remember to import the module containing this task?\n"
+                    "Or maybe you're using relative imports?\n\n"
+                    "Please see\n"
+                    "https://docs.celeryq.dev/en/latest/internals/protocol.html\n"
+                    "for more information.\n\n"
+                    "The full contents of the message body was:\n"
+                    "%r (%db)\n\n"
+                    "The full contents of the message headers:\n"
+                    "%r\n\n"
+                    "The delivery info for this task is:\n"
+                    "%r",
+                    task.task_name,
+                    message.body,
+                    len(message.body),
+                    message.headers,
+                    {
+                        "consumer_tag": message.consumer_tag,
+                        "delivery_tag": message.delivery_tag,
+                        "redelivered": message.redelivered,
+                        "exchange": message.exchange,
+                        "routing_key": message.routing_key,
+                    },
+                )
+                await message.reject()
+                return
+
             await _sleep_if_necessary(task)
             try:
                 async with app._provide_task_resources() as resources:
@@ -108,17 +134,21 @@ async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
                         result=result,
                     )
                     await app._publish(next_message, routing_key=next_routing_key)
-            LOGGER.info("[%s] Task completed", task.task_id)
-        except Exception as err:
-            LOGGER.exception(
-                "[%s] Unexpected error happened: [%s] args=%r, kwargs=%r: repr=%r",
-                task_id,
-                task_name,
-                task_args,
-                task_kwargs,
-                err,
+            logger.info(
+                "Task %s[%s] succeeded in %ss: %r",
+                task.task_name,
+                task.task_id,
+                time.monotonic() - timestamp_start,
+                result,
             )
-            raise
+    except Exception:
+        logger.exception(
+            "[%s] Unexpected error happened: [%s] args=%r, kwargs=%r",
+            task_id,
+            task_name,
+            task_args,
+            task_kwargs,
+        )
 
 
 @contextlib.contextmanager
@@ -172,6 +202,11 @@ def _print_intro(concurrency, queue_names, task_names, app):
 
 
 async def run(args: argparse.Namespace) -> None:
+    logging.basicConfig(
+        level=logging.getLevelName(args.loglevel),
+        format="[%(asctime)s][%(name)s][%(levelname)s] %(message)s",
+    )
+    logging.getLogger("aio_celery").setLevel(level=logging.getLevelName(args.loglevel))
     app = _find_app_instance(args.app)
     if not args.queues:
         queue_names = [app.conf.task_default_queue]
@@ -200,5 +235,5 @@ async def run(args: argparse.Namespace) -> None:
                 functools.partial(on_message_received, app=app),
                 timeout=None,  # this should be soft time limit
             )
-        LOGGER.info(" [*] Waiting for messages. To exit press CTRL+C")
+        logger.info("Waiting for messages. To exit press CTRL+C")
         await asyncio.Future()
