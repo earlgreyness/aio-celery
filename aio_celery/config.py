@@ -12,6 +12,7 @@ class DefaultConfig:
 
     # Task result backend settings
     result_backend: Optional[str] = None
+    result_backend_connection_pool_size: int = 50
     result_expires: datetime.timedelta = datetime.timedelta(days=1)
 
     # Message Routing
@@ -21,9 +22,6 @@ class DefaultConfig:
 
     # Broker Settings
     broker_url: str = "amqp://guest:guest@localhost:5672//"
-
-    # Specific
-    redis_pool_size: int = 50
 
     def update(self, **options: Any) -> None:
         fields = {f.name for f in dataclasses.fields(self.__class__)}

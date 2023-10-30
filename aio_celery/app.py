@@ -3,7 +3,16 @@ import logging
 import sys
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Optional
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncIterator,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+)
 
 import aio_pika
 
@@ -14,7 +23,7 @@ from .amqp import create_task_message
 from .annotated_task import AnnotatedTask
 from .backend import create_redis_connection_pool
 from .config import DefaultConfig
-from .result import AsyncResult
+from .result import AsyncResult as _AsyncResult
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +37,7 @@ class _CompleteTaskResources:
 class Celery:
     def __init__(self) -> None:
         self.conf = DefaultConfig()
-        self._tasks_registry: dict[str, AnnotatedTask] = {}
+        self._tasks_registry: Dict[str, AnnotatedTask] = {}
         self._app_context: Any = None
         self._result_backend_connection_pool: Optional[
             "redis.asyncio.BlockingConnectionPool"
@@ -67,7 +76,7 @@ class Celery:
                 if self.conf.result_backend is not None:
                     self._result_backend_connection_pool = create_redis_connection_pool(
                         url=self.conf.result_backend,
-                        pool_size=self.conf.redis_pool_size,
+                        pool_size=self.conf.result_backend_connection_pool_size,
                     )
                 async with self._setup_app_context() as context:
                     self._app_context = context
@@ -77,7 +86,7 @@ class Celery:
                         logger.warning("Shutting down application.")
             finally:
                 if self._result_backend_connection_pool is not None:
-                    await self._result_backend_connection_pool.aclose()
+                    await self._result_backend_connection_pool.disconnect()
 
     def task(self, *args, **opts):
         """Decorator to create a task class out of any callable."""
@@ -120,23 +129,23 @@ class Celery:
     def _get_annotated_task(self, task_name: str) -> AnnotatedTask:
         return self._tasks_registry[task_name]
 
-    def list_registered_task_names(self) -> list[str]:
+    def list_registered_task_names(self) -> List[str]:
         return sorted(self._tasks_registry)
 
-    def AsyncResult(self, task_id: str) -> AsyncResult:
-        return AsyncResult(task_id, app=self)
+    def AsyncResult(self, task_id: str) -> _AsyncResult:
+        return _AsyncResult(task_id, app=self)
 
     async def send_task(  # noqa: PLR0913
         self,
         name: str,
         *,
-        args: Optional[tuple[Any, ...]] = None,
-        kwargs: Optional[dict[str, Any]] = None,
+        args: Optional[Tuple[Any, ...]] = None,
+        kwargs: Optional[Dict[str, Any]] = None,
         countdown: Optional[int] = None,
         task_id: Optional[str] = None,
         priority: Optional[int] = None,
         queue: Optional[str] = None,
-    ) -> AsyncResult:
+    ) -> _AsyncResult:
         task_id = task_id or str(uuid.uuid4())
         routing_key = queue or self.conf.task_default_queue
         logger.info("Sending task %s[%s] to queue %r ...", name, task_id, routing_key)

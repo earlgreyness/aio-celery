@@ -1,6 +1,6 @@
 import datetime
 import json
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from aio_pika import DeliveryMode, Message
 
@@ -9,11 +9,11 @@ def create_task_message(  # noqa: PLR0913
     *,
     task_id: str,
     task_name: str,
-    args: tuple[Any, ...],
+    args: Tuple[Any, ...],
     kwargs: Any,
     priority: int,
     parent_id: Optional[str] = None,
-    chain: Optional[list[dict[str, Any]]] = None,
+    chain: Optional[List[Dict[str, Any]]] = None,
     ignore_result: bool = False,
     countdown: Optional[int] = None,
     reply_to: str = "",
@@ -26,7 +26,7 @@ def create_task_message(  # noqa: PLR0913
             datetime.datetime.now().astimezone() + datetime.timedelta(seconds=countdown)
         ).isoformat()
     # https://docs.celeryq.dev/en/latest/internals/protocol.html
-    headers = {
+    headers: Dict[str, Any] = {
         "argsrepr": repr(args),
         "eta": eta,
         "expires": None,

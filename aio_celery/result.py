@@ -1,7 +1,7 @@
 import asyncio
 import json
 import time
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 if TYPE_CHECKING:
     from .app import Celery
@@ -23,7 +23,7 @@ class AsyncResult:
     def __repr__(self) -> str:
         return f"<{type(self).__name__}: {self.task_id}>"
 
-    async def _get_task_meta(self) -> dict[str, Any]:
+    async def _get_task_meta(self) -> Dict[str, Any]:
         if self.result_backend is None:
             raise RuntimeError("Result backend has not been enabled")
         if self._cache is None:

@@ -119,7 +119,10 @@ async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
                     raise RuntimeError(
                         f"Max retries exceeded {annotated_task.max_retries=}",
                     ) from exc
-                await app._publish(exc.message, routing_key=message.routing_key)
+                await app._publish(
+                    exc.message,
+                    routing_key=(message.routing_key or app.conf.task_default_queue),
+                )
             else:
                 await _handle_task_result(
                     task=task,
@@ -131,13 +134,13 @@ async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
                         result=result,
                     )
                     await app._publish(next_message, routing_key=next_routing_key)
-            logger.info(
-                "Task %s[%s] succeeded in %.6fs: %r",
-                task.task_name,
-                task.task_id,
-                time.monotonic() - timestamp_start,
-                result,
-            )
+                logger.info(
+                    "Task %s[%s] succeeded in %.6fs: %r",
+                    task.task_name,
+                    task.task_id,
+                    time.monotonic() - timestamp_start,
+                    result,
+                )
     except Exception:
         logger.exception(
             "[%s] Unexpected error happened: [%s] args=%r, kwargs=%r",

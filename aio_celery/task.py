@@ -1,11 +1,10 @@
 import copy
-import dataclasses
 import datetime
 import json
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from aio_pika import IncomingMessage, Message
 
@@ -18,14 +17,12 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Task:
     message: IncomingMessage
-    args: tuple[Any, ...]
-    kwargs: dict[str, Any]
-    options: dict[str, Any]
-    chain: list[dict[str, Any]]
+    args: Tuple[Any, ...]
+    kwargs: Dict[str, Any]
+    options: Dict[str, Any]
+    chain: List[Dict[str, Any]]
 
     app: Celery
-
-    context: dict[str, Any] = dataclasses.field(default_factory=dict)
 
     @property
     def task_id(self) -> str:
@@ -77,9 +74,9 @@ class Task:
         self,
         *,
         state: str,
-        meta: dict[str, Any],
+        meta: Dict[str, Any],
         _finalize: bool = False,
-    ):
+    ) -> None:
         result_backend = self.app.result_backend
         if result_backend is None:
             logger.debug("Result backend has not been enabled")
@@ -109,7 +106,7 @@ class Task:
             ex=self.app.conf.result_expires,
         )
 
-    def _build_next_task_message(self, result: Any) -> tuple[Message, str]:
+    def _build_next_task_message(self, result: Any) -> Tuple[Message, str]:
         assert self.chain
         new_chain = copy.deepcopy(self.chain)
         first = new_chain.pop()
@@ -149,9 +146,15 @@ class Task:
         return message
 
     def retry(self, *, countdown: Optional[float] = None) -> None:
-        if countdown is not None:
-            countdown = datetime.timedelta(seconds=countdown)
-        raise RetryRequested(message=self._build_retry_message(countdown=countdown))
+        raise RetryRequested(
+            message=self._build_retry_message(
+                countdown=(
+                    datetime.timedelta(seconds=countdown)
+                    if countdown is not None
+                    else None
+                ),
+            ),
+        )
 
     @property
     def task_soft_time_limit(self) -> Optional[int]:
