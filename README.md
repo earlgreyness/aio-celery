@@ -165,9 +165,11 @@ https://github.com/the-wondersmith/celery-aio-pool
 
 https://github.com/kai3341/celery-pool-asyncio
 
+### Inspiration
+
 https://github.com/taskiq-python/taskiq
 
-### Discussions
+### Relevant Discussions
 
 https://github.com/celery/celery/issues/3884
 

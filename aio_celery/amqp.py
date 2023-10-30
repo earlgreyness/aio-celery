@@ -29,20 +29,20 @@ def create_task_message(  # noqa: PLR0913
         "argsrepr": repr(args),
         "eta": eta,
         "expires": None,
-        "group": None,
+        "group": None,  # required
         "group_index": None,
-        "id": task_id,
+        "id": task_id,  # required
         "ignore_result": ignore_result,
         "kwargsrepr": repr(kwargs),
-        "lang": "py",
+        "lang": "py",  # required
         "origin": "unknown_pid@unknown_hostname",
-        "parent_id": parent_id,
+        "parent_id": parent_id,  # required
         "retries": 0,
-        "root_id": "",
+        "root_id": "",  # required
         "shadow": None,
         "stamped_headers": None,
         "stamps": {},
-        "task": task_name,
+        "task": task_name,  # required
         "timelimit": [None, None],
     }
     body: bytes = json.dumps(
@@ -65,5 +65,5 @@ def create_task_message(  # noqa: PLR0913
         delivery_mode=DeliveryMode.PERSISTENT,
         priority=priority,
         correlation_id=task_id,
-        reply_to="",
+        reply_to="",  # optional
     )
