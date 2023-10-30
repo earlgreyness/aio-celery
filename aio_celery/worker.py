@@ -10,7 +10,7 @@ import os
 import sys
 import time
 import urllib.parse
-from typing import Any
+from typing import Any, Optional
 
 from aio_pika import IncomingMessage
 from yarl import URL
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 async def _sleep_if_necessary(task: Task) -> None:
-    eta: datetime.datetime | None = task.eta
+    eta: Optional[datetime.datetime] = task.eta
     if eta is None:
         return
     now = datetime.datetime.now().astimezone()
@@ -108,12 +108,9 @@ async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
 
             await _sleep_if_necessary(task)
             try:
-                async with app._provide_task_resources() as resources:
-                    task.redis_client = resources.redis_client_celery
-                    task.context = resources.context
-                    args = (task, *task.args) if annotated_task.bind else task.args
-                    async with asyncio.timeout(task.task_soft_time_limit):
-                        result = await annotated_task.fn(*args, **task.kwargs)
+                args = (task, *task.args) if annotated_task.bind else task.args
+                async with asyncio.timeout(task.task_soft_time_limit):
+                    result = await annotated_task.fn(*args, **task.kwargs)
             except RetryRequested as exc:
                 if (
                     annotated_task.max_retries is not None

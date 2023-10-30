@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 from .amqp import create_task_message
 from .annotated_task import AnnotatedTask
-from .backend import create_redis_pool
+from .backend import create_redis_connection_pool
 from .config import DefaultConfig
 from .result import AsyncResult
 
@@ -30,7 +30,9 @@ class Celery:
         self.conf = DefaultConfig()
         self._tasks_registry: dict[str, AnnotatedTask] = {}
         self._app_context: Any = None
-        self._redis_pool_celery: Optional["redis.asyncio.BlockingConnectionPool"] = None
+        self._result_backend_connection_pool: Optional[
+            "redis.asyncio.BlockingConnectionPool"
+        ] = None
         self.rabbitmq_channel: Optional[aio_pika.RobustChannel] = None
         self._setup_app_context: Callable[
             [],
@@ -47,36 +49,35 @@ class Celery:
     def context(self) -> Any:
         return self._app_context
 
+    @property
+    def result_backend(self) -> Optional["redis.asyncio.Redis"]:
+        if self._result_backend_connection_pool is None:
+            return None
+
+        from redis.asyncio import Redis
+
+        return Redis(connection_pool=self._result_backend_connection_pool)
+
     @contextlib.asynccontextmanager
     async def setup(self) -> AsyncIterator[None]:
         connection = await aio_pika.connect_robust(self.conf.broker_url)
         async with connection, connection.channel() as channel:
             self.rabbitmq_channel = channel
-            if self.conf.result_backend is not None:
-                self._redis_pool_celery = create_redis_pool(
-                    url=self.conf.result_backend,
-                    pool_size=self.conf.redis_pool_size,
-                )
-            async with self._setup_app_context() as context:
-                self._app_context = context
-                try:
-                    yield
-                finally:
-                    logger.warning("Shutting down application.")
-
-    @contextlib.asynccontextmanager
-    async def _provide_task_resources(
-        self,
-    ) -> AsyncIterator[_CompleteTaskResources]:
-        if self._redis_pool_celery is not None:
-            import redis.asyncio
-
-            async with redis.asyncio.Redis(
-                connection_pool=self._redis_pool_celery,
-            ) as redis_client:
-                yield _CompleteTaskResources(self._app_context, redis_client)
-        else:
-            yield _CompleteTaskResources(self._app_context, None)
+            try:
+                if self.conf.result_backend is not None:
+                    self._result_backend_connection_pool = create_redis_connection_pool(
+                        url=self.conf.result_backend,
+                        pool_size=self.conf.redis_pool_size,
+                    )
+                async with self._setup_app_context() as context:
+                    self._app_context = context
+                    try:
+                        yield
+                    finally:
+                        logger.warning("Shutting down application.")
+            finally:
+                if self._result_backend_connection_pool is not None:
+                    await self._result_backend_connection_pool.aclose()
 
     def task(self, *args, **opts):
         """Decorator to create a task class out of any callable."""

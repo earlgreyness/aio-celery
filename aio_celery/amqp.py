@@ -16,6 +16,7 @@ def create_task_message(  # noqa: PLR0913
     chain: Optional[list[dict[str, Any]]] = None,
     ignore_result: bool = False,
     countdown: Optional[int] = None,
+    reply_to: str = "",
 ) -> Message:
     kwargs = kwargs or {}
     if countdown is None:
@@ -65,5 +66,5 @@ def create_task_message(  # noqa: PLR0913
         delivery_mode=DeliveryMode.PERSISTENT,
         priority=priority,
         correlation_id=task_id,
-        reply_to="",  # optional
+        reply_to=reply_to,  # optional
     )

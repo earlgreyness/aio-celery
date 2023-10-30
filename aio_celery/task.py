@@ -5,10 +5,8 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
-if TYPE_CHECKING:
-    import redis.asyncio
 from aio_pika import IncomingMessage, Message
 
 from .amqp import create_task_message
@@ -27,7 +25,6 @@ class Task:
 
     app: Celery
 
-    redis_client: Optional["redis.asyncio.Redis"] = None
     context: dict[str, Any] = dataclasses.field(default_factory=dict)
 
     @property
@@ -39,7 +36,7 @@ class Task:
         return str(self.message.headers["task"])
 
     @property
-    def eta(self) -> datetime.datetime | None:
+    def eta(self) -> Optional[datetime.datetime]:
         eta = self.message.headers["eta"]
         if eta is None:
             return None
@@ -83,7 +80,8 @@ class Task:
         meta: dict[str, Any],
         _finalize: bool = False,
     ):
-        if self.redis_client is None:
+        result_backend = self.app.result_backend
+        if result_backend is None:
             logger.debug("Result backend has not been enabled")
             return
         if _finalize:
@@ -105,7 +103,7 @@ class Task:
             payload["group_id"] = self.message.headers["group"]
         if self.message.headers["parent_id"] is not None:
             payload["parent_id"] = self.message.headers["parent_id"]
-        await self.redis_client.set(
+        await result_backend.set(
             f"celery-task-meta-{self.task_id}",
             json.dumps(payload).encode(),
             ex=self.app.conf.result_expires,
@@ -119,6 +117,7 @@ class Task:
         new_task_id: str = opts.get("task_id") or str(uuid.uuid4())
         new_priority: int = opts.get("priority") or self.app.conf.task_default_priority
         routing_key: str = opts.get("queue") or self.app.conf.task_default_queue
+        reply_to: str = opts.get("reply_to") or ""
         return (
             create_task_message(
                 task_id=new_task_id,
@@ -128,6 +127,7 @@ class Task:
                 priority=new_priority,
                 parent_id=self.task_id,
                 chain=new_chain,
+                reply_to=reply_to,
             ),
             routing_key,
         )
@@ -154,7 +154,7 @@ class Task:
         raise RetryRequested(message=self._build_retry_message(countdown=countdown))
 
     @property
-    def task_soft_time_limit(self) -> int | None:
+    def task_soft_time_limit(self) -> Optional[int]:
         soft, _hard = self.message.headers["timelimit"]
         return soft or self.app.conf.task_soft_time_limit
 

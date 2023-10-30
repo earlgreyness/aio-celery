@@ -1,17 +1,17 @@
 import dataclasses
 import datetime
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 
 @dataclass
 class DefaultConfig:
     # Task execution settings
     task_ignore_result: bool = False
-    task_soft_time_limit: int | None = None
+    task_soft_time_limit: Optional[int] = None
 
     # Task result backend settings
-    result_backend: str | None = None
+    result_backend: Optional[str] = None
     result_expires: datetime.timedelta = datetime.timedelta(days=1)
 
     # Message Routing
