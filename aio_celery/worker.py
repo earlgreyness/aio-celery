@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import asyncio.exceptions
+import asyncio.timeouts
 import contextlib
 import datetime
 import functools
@@ -109,7 +110,7 @@ async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
             await _sleep_if_necessary(task)
             try:
                 args = (task, *task.args) if annotated_task.bind else task.args
-                async with asyncio.timeout(task.task_soft_time_limit):
+                async with asyncio.timeouts.timeout(task.task_soft_time_limit):
                     result = await annotated_task.fn(*args, **task.kwargs)
             except RetryRequested as exc:
                 if (
