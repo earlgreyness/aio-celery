@@ -39,7 +39,7 @@ class AsyncResult:
 
     @property
     async def state(self) -> str:
-        return (await self._get_task_meta())["status"]
+        return str((await self._get_task_meta())["status"])
 
     async def get(self, timeout: Optional[float] = None, interval: float = 0.5) -> Any:
         """Wait until task is ready, and return its result."""

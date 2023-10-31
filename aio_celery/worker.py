@@ -11,8 +11,9 @@ import os
 import sys
 import time
 import urllib.parse
-from typing import Any, Optional
+from typing import Any, List, Optional
 
+import aiormq.exceptions
 from aio_pika import IncomingMessage
 from yarl import URL
 
@@ -43,8 +44,14 @@ async def _sleep_if_necessary(task: Task) -> None:
         return
     now = datetime.datetime.now().astimezone()
     if eta > now:
-        logger.info("[%s] Sleeping until %s...", task.task_id, eta)
-        await asyncio.sleep((eta - now).total_seconds())
+        delta: datetime.timedelta = eta - now
+        logger.info(
+            "[%s] Sleeping for %s until task ETA %s ...",
+            task.task_id,
+            delta,
+            eta,
+        )
+        await asyncio.sleep(delta.total_seconds())
 
 
 async def _handle_task_result(
@@ -61,19 +68,42 @@ async def _handle_task_result(
     await task.update_state(state="SUCCESS", meta=result, _finalize=True)
 
 
+async def _handle_task_retry(
+    *,
+    task: Task,
+    annotated_task: AnnotatedTask,
+    app: Celery,
+    exc: RetryRequested,
+    message: IncomingMessage,
+) -> None:
+    logger.info(
+        "Task %s[%s] retry: %s",
+        task.task_name,
+        task.task_id,
+        exc,
+    )
+    if (
+        annotated_task.max_retries is not None
+        and task.get_already_happened_retries() > annotated_task.max_retries
+    ):
+        raise RuntimeError(
+            f"Max retries exceeded {annotated_task.max_retries=}",
+        ) from exc
+    await app.broker.publish_message(
+        exc.message,
+        routing_key=(message.routing_key or app.conf.task_default_queue),
+    )
+
+
 async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
-    timestamp_start = time.monotonic()
     task_id = None
     task_name = None
-    task_args = None
-    task_kwargs = None
+    soft_time_limit = app.conf.task_soft_time_limit
     try:
         async with message.process(ignore_processed=True):
             task = Task.from_raw_message(message, app=app)
             task_id = task.task_id
             task_name = task.task_name
-            task_args = task.args
-            task_kwargs = task.kwargs
             logger.info("Task %s[%s] received", task.task_name, task.task_id)
             try:
                 annotated_task = app._get_annotated_task(task.task_name)
@@ -108,21 +138,20 @@ async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
                 return
 
             await _sleep_if_necessary(task)
+
+            timestamp_start = time.monotonic()
+            args = (task, *task.args) if annotated_task.bind else task.args
+            soft_time_limit = task.task_soft_time_limit
             try:
-                args = (task, *task.args) if annotated_task.bind else task.args
-                async with asyncio.timeouts.timeout(task.task_soft_time_limit):
+                async with asyncio.timeouts.timeout(soft_time_limit):
                     result = await annotated_task.fn(*args, **task.kwargs)
             except RetryRequested as exc:
-                if (
-                    annotated_task.max_retries is not None
-                    and task.get_already_happened_retries() > annotated_task.max_retries
-                ):
-                    raise RuntimeError(
-                        f"Max retries exceeded {annotated_task.max_retries=}",
-                    ) from exc
-                await app._publish(
-                    exc.message,
-                    routing_key=(message.routing_key or app.conf.task_default_queue),
+                await _handle_task_retry(
+                    task=task,
+                    annotated_task=annotated_task,
+                    app=app,
+                    exc=exc,
+                    message=message,
                 )
             else:
                 await _handle_task_result(
@@ -134,7 +163,10 @@ async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
                     next_message, next_routing_key = task._build_next_task_message(
                         result=result,
                     )
-                    await app._publish(next_message, routing_key=next_routing_key)
+                    await app.broker.publish_message(
+                        next_message,
+                        routing_key=next_routing_key,
+                    )
                 logger.info(
                     "Task %s[%s] succeeded in %.6fs: %r",
                     task.task_name,
@@ -142,13 +174,24 @@ async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
                     time.monotonic() - timestamp_start,
                     result,
                 )
-    except Exception:
+    except aiormq.exceptions.ChannelInvalidStateError:
+        pass
+    # This does not catch asyncio.exceptions.CancelledError since
+    # the latter inherits directly from BaseException — not from Exception.
+    # And that is okay for us. CancelledError is not meant to be caught.
+    except Exception as err:
+        if isinstance(err, asyncio.exceptions.TimeoutError):
+            logger.warning(
+                "Soft time limit (%ss) exceeded for %s[%s]",
+                soft_time_limit,
+                task_name,
+                task_id,
+            )
         logger.exception(
-            "[%s] Unexpected error happened: [%s] args=%r, kwargs=%r",
-            task_id,
+            "Task %s[%s] raised unexpected: %r",
             task_name,
-            task_args,
-            task_kwargs,
+            task_id,
+            err,
         )
 
 
@@ -171,10 +214,18 @@ def _find_app_instance(locator: str) -> Celery:
     with _cwd_in_path():
         module_name, app_name = locator.rsplit(":", 1)
         module = importlib.import_module(module_name)
-        return getattr(module, app_name)
+        app = getattr(module, app_name)
+    if not isinstance(app, Celery):
+        raise TypeError("app instance must inherit from Celery class")
+    return app
 
 
-def _print_intro(concurrency, queue_names, task_names, app):
+def _print_intro(
+    concurrency: int,
+    queue_names: List[str],
+    task_names: List[str],
+    app: Celery,
+) -> None:
     q = ".> " + "\n.> ".join(queue_names)
     t = "  . " + "\n  . ".join(task_names)
 
@@ -222,19 +273,9 @@ async def run(args: argparse.Namespace) -> None:
     )
 
     async with app.setup():
-        await app.rabbitmq_channel.set_qos(prefetch_count=args.concurrency)
-        queues = [
-            await app.rabbitmq_channel.declare_queue(
-                name=name,
-                durable=True,
-                arguments={"x-max-priority": app.conf.task_queue_max_priority},
-            )
-            for name in queue_names
-        ]
+        await app.broker.set_qos(prefetch_count=args.concurrency)
+        queues = [await app.broker.declare_queue(name) for name in queue_names]
         for queue in queues:
-            await queue.consume(
-                functools.partial(on_message_received, app=app),
-                timeout=None,  # this should be soft time limit
-            )
+            await queue.consume(functools.partial(on_message_received, app=app))
         logger.info("Waiting for messages. To exit press CTRL+C")
         await asyncio.Future()

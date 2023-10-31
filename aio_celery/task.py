@@ -146,14 +146,12 @@ class Task:
         return message
 
     def retry(self, *, countdown: Optional[float] = None) -> None:
+        delay = datetime.timedelta(
+            seconds=countdown if countdown is not None else 3 * 60,
+        )
         raise RetryRequested(
-            message=self._build_retry_message(
-                countdown=(
-                    datetime.timedelta(seconds=countdown)
-                    if countdown is not None
-                    else None
-                ),
-            ),
+            message=self._build_retry_message(countdown=delay),
+            delay=delay,
         )
 
     @property
@@ -166,6 +164,10 @@ class Task:
 
 
 class RetryRequested(Exception):
-    def __init__(self, *, message: Message) -> None:
+    def __init__(self, *, message: Message, delay: datetime.timedelta) -> None:
         self.message = message
+        self._delay = delay
         super().__init__()
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__} in {self._delay.total_seconds()}s"

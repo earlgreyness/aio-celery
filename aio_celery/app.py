@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 from .amqp import create_task_message
 from .annotated_task import AnnotatedTask
 from .backend import create_redis_connection_pool
+from .broker import Broker
 from .config import DefaultConfig
 from .result import AsyncResult as _AsyncResult
 
@@ -42,7 +43,7 @@ class Celery:
         self._result_backend_connection_pool: Optional[
             "redis.asyncio.BlockingConnectionPool"
         ] = None
-        self.rabbitmq_channel: Optional[aio_pika.RobustChannel] = None
+        self.broker: Optional[Broker] = None
         self._setup_app_context: Callable[
             [],
             contextlib.AbstractAsyncContextManager,
@@ -71,7 +72,10 @@ class Celery:
     async def setup(self) -> AsyncIterator[None]:
         connection = await aio_pika.connect_robust(self.conf.broker_url)
         async with connection, connection.channel() as channel:
-            self.rabbitmq_channel = channel
+            self.broker = Broker(
+                rabbitmq_channel=channel,
+                task_queue_max_priority=self.conf.task_queue_max_priority,
+            )
             try:
                 if self.conf.result_backend is not None:
                     self._result_backend_connection_pool = create_redis_connection_pool(
@@ -149,7 +153,7 @@ class Celery:
         task_id = task_id or str(uuid.uuid4())
         routing_key = queue or self.conf.task_default_queue
         logger.info("Sending task %s[%s] to queue %r ...", name, task_id, routing_key)
-        await self._publish(
+        await self.broker.publish_message(
             create_task_message(
                 task_id=task_id,
                 task_name=name,
@@ -161,14 +165,6 @@ class Celery:
             routing_key=routing_key,
         )
         return self.AsyncResult(task_id)
-
-    async def _publish(self, message: aio_pika.Message, routing_key: str) -> None:
-        assert self.rabbitmq_channel is not None
-        await self.rabbitmq_channel.default_exchange.publish(
-            message,
-            routing_key=routing_key,
-            timeout=60,
-        )
 
 
 @contextlib.asynccontextmanager
