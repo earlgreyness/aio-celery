@@ -1,4 +1,5 @@
-import argparse
+from __future__ import annotations
+
 import asyncio
 import asyncio.exceptions
 import asyncio.timeouts
@@ -7,22 +8,26 @@ import datetime
 import functools
 import importlib
 import logging
-import os
+import pathlib
 import sys
 import time
 import urllib.parse
-from typing import Any, List, Optional
+from typing import TYPE_CHECKING, Any, Iterator, Optional, cast
 
 import aiormq.exceptions
-from aio_pika import IncomingMessage
 from yarl import URL
 
-from .annotated_task import AnnotatedTask
 from .app import Celery
-from .task import (
-    RetryRequested,
-    Task,
-)
+from .context import CURRENT_ROOT_ID, CURRENT_TASK_ID
+from .exceptions import MaxRetriesExceededError, Retry
+from .task import Task
+
+if TYPE_CHECKING:
+    import argparse
+
+    from aio_pika import IncomingMessage
+
+    from .annotated_task import AnnotatedTask
 
 BANNER = """\
 [config]
@@ -39,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 
 async def _sleep_if_necessary(task: Task) -> None:
-    eta: Optional[datetime.datetime] = task.eta
+    eta: datetime.datetime | None = task.eta
     if eta is None:
         return
     now = datetime.datetime.now().astimezone()
@@ -62,7 +67,7 @@ async def _handle_task_result(
     if (
         task.app.conf.task_ignore_result
         or annotated_task.ignore_result
-        or task._get_task_ignore_result()
+        or task.ignore_result
     ):
         return
     await task.update_state(state="SUCCESS", meta=result, _finalize=True)
@@ -73,22 +78,22 @@ async def _handle_task_retry(
     task: Task,
     annotated_task: AnnotatedTask,
     app: Celery,
-    exc: RetryRequested,
+    exc: Retry,
     message: IncomingMessage,
 ) -> None:
     logger.info(
         "Task %s[%s] retry: %s",
-        task.task_name,
+        task.name,
         task.task_id,
         exc,
     )
-    if (
-        annotated_task.max_retries is not None
-        and task.get_already_happened_retries() > annotated_task.max_retries
-    ):
-        raise RuntimeError(
-            f"Max retries exceeded {annotated_task.max_retries=}",
-        ) from exc
+    max_retries = annotated_task.max_retries
+    if max_retries is not None and task.get_already_happened_retries() > max_retries:
+        msg = (
+            f"Can't retry {task.name}[{task.task_id}] args:{task.args}"
+            f" kwargs:{task.kwargs} max_retries:{max_retries}"
+        )
+        raise MaxRetriesExceededError(msg)
     await app.broker.publish_message(
         exc.message,
         routing_key=(message.routing_key or app.conf.task_default_queue),
@@ -96,17 +101,19 @@ async def _handle_task_retry(
 
 
 async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
-    task_id = None
-    task_name = None
+    task_id: str | None = None
+    task_name: str | None = None
     soft_time_limit = app.conf.task_soft_time_limit
     try:
         async with message.process(ignore_processed=True):
-            task = Task.from_raw_message(message, app=app)
-            task_id = task.task_id
-            task_name = task.task_name
-            logger.info("Task %s[%s] received", task.task_name, task.task_id)
+            task_id = str(message.headers["id"])
+            task_name = str(message.headers["task"])
+            root_id = cast(Optional[str], message.headers["root_id"])
+            logger.info("Task %s[%s] received", task_name, task_id)
+            CURRENT_ROOT_ID.set(root_id)
+            CURRENT_TASK_ID.set(task_id)
             try:
-                annotated_task = app._get_annotated_task(task.task_name)
+                annotated_task = app.get_annotated_task(task_name)
             except KeyError:
                 logger.exception(
                     "Received unregistered task of type %r\n"
@@ -122,7 +129,7 @@ async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
                     "%r\n\n"
                     "The delivery info for this task is:\n"
                     "%r",
-                    task.task_name,
+                    task_name,
                     message.body,
                     len(message.body),
                     message.headers,
@@ -137,6 +144,11 @@ async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
                 await message.reject()
                 return
 
+            task = Task.from_raw_message(
+                message,
+                app=app,
+                annotated_task=annotated_task,
+            )
             await _sleep_if_necessary(task)
 
             timestamp_start = time.monotonic()
@@ -145,7 +157,7 @@ async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
             try:
                 async with asyncio.timeouts.timeout(soft_time_limit):
                     result = await annotated_task.fn(*args, **task.kwargs)
-            except RetryRequested as exc:
+            except Retry as exc:
                 await _handle_task_retry(
                     task=task,
                     annotated_task=annotated_task,
@@ -159,17 +171,17 @@ async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
                     annotated_task=annotated_task,
                     result=result,
                 )
-                if task.chain:
-                    next_message, next_routing_key = task._build_next_task_message(
-                        result=result,
-                    )
+                next_message, next_routing_key = task.build_next_task_message(
+                    result=result,
+                )
+                if next_message is not None:
                     await app.broker.publish_message(
                         next_message,
                         routing_key=next_routing_key,
                     )
                 logger.info(
                     "Task %s[%s] succeeded in %.6fs: %r",
-                    task.task_name,
+                    task.name,
                     task.task_id,
                     time.monotonic() - timestamp_start,
                     result,
@@ -188,23 +200,25 @@ async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
                 task_id,
             )
         logger.exception(
-            "Task %s[%s] raised unexpected: %r",
+            "Task %s[%s] raised unexpected:",
             task_name,
             task_id,
-            err,
         )
+    finally:
+        CURRENT_ROOT_ID.set(None)
+        CURRENT_TASK_ID.set(None)
 
 
 @contextlib.contextmanager
-def _cwd_in_path():
+def _cwd_in_path() -> Iterator[None]:
     """Context adding the current working directory to sys.path."""
-    cwd = os.getcwd()
+    cwd = str(pathlib.Path.cwd())
     if cwd in sys.path:
         yield
     else:
         sys.path.insert(0, cwd)
         try:
-            yield cwd
+            yield
         finally:
             with contextlib.suppress(ValueError):
                 sys.path.remove(cwd)
@@ -216,20 +230,21 @@ def _find_app_instance(locator: str) -> Celery:
         module = importlib.import_module(module_name)
         app = getattr(module, app_name)
     if not isinstance(app, Celery):
-        raise TypeError("app instance must inherit from Celery class")
+        msg = "app instance must inherit from Celery class"
+        raise TypeError(msg)
     return app
 
 
 def _print_intro(
     concurrency: int,
-    queue_names: List[str],
-    task_names: List[str],
+    queue_names: list[str],
+    task_names: list[str],
     app: Celery,
 ) -> None:
     q = ".> " + "\n.> ".join(queue_names)
     t = "  . " + "\n  . ".join(task_names)
 
-    def _normalize(u):
+    def _normalize(u: str | None) -> str:
         if not u:
             return "disabled://"
         parts = urllib.parse.urlparse(u)
@@ -244,13 +259,13 @@ def _print_intro(
         concurrency=f"{concurrency} (asyncio)",
         queues=q,
     ).splitlines()
-    print(
+    print(  # noqa: T201
         "╔═══════════════════════╗\n"
         "║ AsyncIO Celery Worker ║\n"
         "╚═══════════════════════╝\n",
     )
-    print("\n".join(banner) + "\n")
-    print(f"[tasks]\n{t}\n")
+    print("\n".join(banner) + "\n")  # noqa: T201
+    print(f"[tasks]\n{t}\n")  # noqa: T201
 
 
 async def run(args: argparse.Namespace) -> None:

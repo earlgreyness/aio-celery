@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import datetime
 import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from aio_pika import DeliveryMode, Message
 
@@ -9,15 +11,17 @@ def create_task_message(  # noqa: PLR0913
     *,
     task_id: str,
     task_name: str,
-    args: Tuple[Any, ...],
-    kwargs: Any,
-    priority: int,
-    parent_id: Optional[str] = None,
-    chain: Optional[List[Dict[str, Any]]] = None,
+    args: tuple[Any, ...] | None,
+    kwargs: dict[str, Any] | None,
+    priority: int | None,
+    parent_id: str | None,
+    root_id: str | None,
+    chain: list[dict[str, Any]] | None = None,
     ignore_result: bool = False,
-    countdown: Optional[int] = None,
+    countdown: int | None = None,
     reply_to: str = "",
 ) -> Message:
+    args = args or ()
     kwargs = kwargs or {}
     if countdown is None:
         eta = None
@@ -26,7 +30,7 @@ def create_task_message(  # noqa: PLR0913
             datetime.datetime.now().astimezone() + datetime.timedelta(seconds=countdown)
         ).isoformat()
     # https://docs.celeryq.dev/en/latest/internals/protocol.html
-    headers: Dict[str, Any] = {
+    headers: dict[str, Any] = {
         "argsrepr": repr(args),
         "eta": eta,
         "expires": None,
@@ -39,7 +43,7 @@ def create_task_message(  # noqa: PLR0913
         "origin": "unknown_pid@unknown_hostname",
         "parent_id": parent_id,  # required
         "retries": 0,
-        "root_id": "",  # required
+        "root_id": root_id if root_id is not None else task_id,  # required
         "shadow": None,
         "stamped_headers": None,
         "stamps": {},

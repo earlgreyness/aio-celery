@@ -10,9 +10,6 @@ MAX_AMQP_PREFETCH_COUNT = 65535
 
 
 def main() -> None:
-    """
-    Main entrypoint of aio_celery.
-    """
     parser = argparse.ArgumentParser(
         prog="aio_celery",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -73,7 +70,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.version:
-        print(__version__)
+        print(__version__)  # noqa: T201
         return
 
     if args.subcommand is None:
@@ -81,7 +78,7 @@ def main() -> None:
         return
 
     if not (0 < args.concurrency <= MAX_AMQP_PREFETCH_COUNT):
-        print(
+        print(  # noqa: T201
             "concurrency must be between 1 and 65535 "
             "(latter is maximum AMQP 0-9-1 prefetch count)",
             file=sys.stderr,

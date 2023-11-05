@@ -1,15 +1,23 @@
+from __future__ import annotations
+
 import copy
+import dataclasses
 import datetime
 import json
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
-
-from aio_pika import IncomingMessage, Message
+from typing import TYPE_CHECKING, Any, Optional, Tuple, cast
 
 from .amqp import create_task_message
-from .app import Celery
+from .exceptions import Retry
+from .utils import first_not_null
+
+if TYPE_CHECKING:
+    from aio_pika import IncomingMessage, Message
+
+    from .annotated_task import AnnotatedTask
+    from .app import Celery
 
 logger = logging.getLogger(__name__)
 
@@ -17,64 +25,58 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Task:
     message: IncomingMessage
-    args: Tuple[Any, ...]
-    kwargs: Dict[str, Any]
-    options: Dict[str, Any]
-    chain: List[Dict[str, Any]]
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
+    options: dict[str, Any]
+    chain: list[dict[str, Any]]
 
     app: Celery
+
+    _default_retry_delay: int = dataclasses.field(repr=False)
 
     @property
     def task_id(self) -> str:
         return str(self.message.headers["id"])
 
     @property
-    def task_name(self) -> str:
+    def name(self) -> str:
         return str(self.message.headers["task"])
 
     @property
-    def eta(self) -> Optional[datetime.datetime]:
+    def eta(self) -> datetime.datetime | None:
         eta = self.message.headers["eta"]
         if eta is None:
             return None
-        return datetime.datetime.fromisoformat(eta)
+        return datetime.datetime.fromisoformat(str(eta))
 
     @classmethod
     def from_raw_message(
-        cls,
+        cls: type[Task],
         message: IncomingMessage,
         *,
         app: Celery,
-    ) -> "Task":
+        annotated_task: AnnotatedTask,
+    ) -> Task:
         args, kwargs, options = json.loads(message.body)
-        callbacks, errbacks, chain, chord = (
-            options["callbacks"],
-            options["errbacks"],
-            options["chain"],
-            options["chord"],
-        )
-        assert callbacks is None
-        assert errbacks is None
-        assert chord is None
+
         return cls(
             message=message,
             args=args,
             kwargs=kwargs,
             options=options,
-            chain=chain,
+            chain=options["chain"],
             app=app,
+            _default_retry_delay=annotated_task.default_retry_delay,
         )
 
     def get_already_happened_retries(self) -> int:
-        retries = int(self.message.headers["retries"])
-        assert retries >= 0
-        return retries
+        return cast(int, self.message.headers["retries"])
 
     async def update_state(
         self,
         *,
         state: str,
-        meta: Dict[str, Any],
+        meta: dict[str, Any],
         _finalize: bool = False,
     ) -> None:
         result_backend = self.app.result_backend
@@ -84,7 +86,7 @@ class Task:
         if _finalize:
             # do not update if result already in redis
             pass
-        payload = {
+        payload: dict[str, Any] = {
             "status": state,
             "result": meta,
             "traceback": None,
@@ -106,15 +108,23 @@ class Task:
             ex=self.app.conf.result_expires,
         )
 
-    def _build_next_task_message(self, result: Any) -> Tuple[Message, str]:
-        assert self.chain
+    def build_next_task_message(self, result: Any) -> tuple[Message | None, str]:
+        if not self.chain:
+            return None, ""
         new_chain = copy.deepcopy(self.chain)
         first = new_chain.pop()
         opts = first.get("options", {})
-        new_task_id: str = opts.get("task_id") or str(uuid.uuid4())
-        new_priority: int = opts.get("priority") or self.app.conf.task_default_priority
-        routing_key: str = opts.get("queue") or self.app.conf.task_default_queue
-        reply_to: str = opts.get("reply_to") or ""
+        new_task_id: str = first_not_null(opts.get("task_id"), str(uuid.uuid4()))
+        new_priority: int = first_not_null(
+            opts.get("priority"),
+            self.app.conf.task_default_priority,
+        )
+        routing_key: str = first_not_null(
+            opts.get("queue"),
+            self.app.conf.task_default_queue,
+        )
+        reply_to: str = first_not_null(opts.get("reply_to"), "")
+        root_id = cast(Optional[str], self.message.headers["root_id"])
         return (
             create_task_message(
                 task_id=new_task_id,
@@ -123,6 +133,7 @@ class Task:
                 kwargs=first["kwargs"],
                 priority=new_priority,
                 parent_id=self.task_id,
+                root_id=root_id,
                 chain=new_chain,
                 reply_to=reply_to,
             ),
@@ -132,7 +143,7 @@ class Task:
     def _build_retry_message(
         self,
         *,
-        countdown: Optional[datetime.timedelta],
+        countdown: datetime.timedelta | None,
     ) -> Message:
         message = copy.copy(self.message)
         if countdown is None:
@@ -141,33 +152,31 @@ class Task:
             eta = (datetime.datetime.now().astimezone() + countdown).isoformat()
         message.headers.update(
             eta=eta,
-            retries=self.message.headers["retries"] + 1,
+            retries=self.get_already_happened_retries() + 1,
+            parent_id=self.task_id,
         )
         return message
 
-    def retry(self, *, countdown: Optional[float] = None) -> None:
+    async def retry(self, *, countdown: float | None = None) -> None:
         delay = datetime.timedelta(
-            seconds=countdown if countdown is not None else 3 * 60,
+            seconds=countdown if countdown is not None else self._default_retry_delay,
         )
-        raise RetryRequested(
+        raise Retry(
             message=self._build_retry_message(countdown=delay),
             delay=delay,
         )
 
     @property
-    def task_soft_time_limit(self) -> Optional[int]:
-        soft, _hard = self.message.headers["timelimit"]
-        return soft or self.app.conf.task_soft_time_limit
+    def task_soft_time_limit(self) -> int | None:
+        limits = cast(
+            Tuple[Optional[int], Optional[int]],
+            self.message.headers["timelimit"],
+        )
+        limit = limits[0]
+        if limit is not None:
+            return limit
+        return self.app.conf.task_soft_time_limit
 
-    def _get_task_ignore_result(self) -> bool:
+    @property
+    def ignore_result(self) -> bool:
         return bool(self.message.headers["ignore_result"])
-
-
-class RetryRequested(Exception):
-    def __init__(self, *, message: Message, delay: datetime.timedelta) -> None:
-        self.message = message
-        self._delay = delay
-        super().__init__()
-
-    def __str__(self) -> str:
-        return f"{self.__class__.__name__} in {self._delay.total_seconds()}s"

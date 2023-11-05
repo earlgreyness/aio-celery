@@ -1,20 +1,23 @@
-from typing import Set
+from __future__ import annotations
 
-from aio_pika import Message
-from aio_pika.robust_channel import AbstractRobustChannel
-from aio_pika.robust_queue import AbstractRobustQueue
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from aio_pika import Message
+    from aio_pika.abc import AbstractChannel, AbstractQueue
+    from pamqp.common import Arguments
 
 
 class Broker:
     def __init__(
         self,
         *,
-        rabbitmq_channel: AbstractRobustChannel,
-        task_queue_max_priority: int,
+        rabbitmq_channel: AbstractChannel,
+        task_queue_max_priority: int | None,
     ) -> None:
         self._rabbitmq_channel = rabbitmq_channel
-        self._task_queue_max_priority: int = task_queue_max_priority
-        self._already_declared_queues: Set[str] = set()
+        self._task_queue_max_priority: int | None = task_queue_max_priority
+        self._already_declared_queues: set[str] = set()
 
     async def publish_message(
         self,
@@ -31,11 +34,16 @@ class Broker:
             timeout=60,
         )
 
-    async def declare_queue(self, queue_name: str) -> AbstractRobustQueue:
+    async def declare_queue(self, queue_name: str) -> AbstractQueue:
+        arguments: Arguments
+        if self._task_queue_max_priority is not None:
+            arguments = {"x-max-priority": self._task_queue_max_priority}
+        else:
+            arguments = None
         queue = await self._rabbitmq_channel.declare_queue(
             name=queue_name,
             durable=True,
-            arguments={"x-max-priority": self._task_queue_max_priority},
+            arguments=arguments,
         )
         self._already_declared_queues.add(queue_name)
         return queue

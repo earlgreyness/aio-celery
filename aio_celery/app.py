@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import contextlib
 import logging
 import sys
@@ -8,23 +10,21 @@ from typing import (
     Any,
     AsyncIterator,
     Callable,
-    Dict,
-    List,
-    Optional,
-    Tuple,
 )
 
 import aio_pika
-
-if TYPE_CHECKING:
-    import redis.asyncio
 
 from .amqp import create_task_message
 from .annotated_task import AnnotatedTask
 from .backend import create_redis_connection_pool
 from .broker import Broker
 from .config import DefaultConfig
+from .context import CURRENT_ROOT_ID, CURRENT_TASK_ID
 from .result import AsyncResult as _AsyncResult
+from .utils import first_not_null
+
+if TYPE_CHECKING:
+    import redis.asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -38,29 +38,40 @@ class _CompleteTaskResources:
 class Celery:
     def __init__(self) -> None:
         self.conf = DefaultConfig()
-        self._tasks_registry: Dict[str, AnnotatedTask] = {}
+        self._tasks_registry: dict[str, AnnotatedTask] = {}
         self._app_context: Any = None
-        self._result_backend_connection_pool: Optional[
-            "redis.asyncio.BlockingConnectionPool"
-        ] = None
-        self.broker: Optional[Broker] = None
+        self._result_backend_connection_pool: (
+            redis.asyncio.BlockingConnectionPool | None
+        ) = None
+        self._broker: Broker | None = None
         self._setup_app_context: Callable[
             [],
-            contextlib.AbstractAsyncContextManager,
+            contextlib.AbstractAsyncContextManager[Any],
         ] = _setup_nothing
 
     def define_app_context(
         self,
-        fn: Callable[[], contextlib.AbstractAsyncContextManager],
+        fn: Callable[[], contextlib.AbstractAsyncContextManager[Any]],
     ) -> None:
         self._setup_app_context = fn
+
+    @property
+    def broker(self) -> Broker:
+        if self._broker is None:
+            msg = "This app has not been configured yet."
+            raise RuntimeError(msg)
+        return self._broker
+
+    @broker.setter
+    def broker(self, b: Broker) -> None:
+        self._broker = b
 
     @property
     def context(self) -> Any:
         return self._app_context
 
     @property
-    def result_backend(self) -> Optional["redis.asyncio.Redis"]:
+    def result_backend(self) -> redis.asyncio.Redis[bytes] | None:
         if self._result_backend_connection_pool is None:
             return None
 
@@ -92,67 +103,71 @@ class Celery:
                 if self._result_backend_connection_pool is not None:
                     await self._result_backend_connection_pool.disconnect()
 
-    def task(self, *args, **opts):
-        """Decorator to create a task class out of any callable."""
+    def task(  # noqa: PLR0913
+        self,
+        *args: Callable[..., Any],
+        bind: bool = False,
+        name: str | None = None,
+        ignore_result: bool | None = None,
+        max_retries: int | None = 3,
+        default_retry_delay: int = 180,
+        queue: str | None = None,
+        priority: int | None = None,
+    ) -> AnnotatedTask | Callable[[Callable[..., Any]], AnnotatedTask]:
+        """Create a task class out of any callable."""
 
-        def create_annotated_task(
-            *,
-            bind: bool = False,
-            name: Optional[str] = None,
-            ignore_result: Optional[bool] = None,
-            max_retries: Optional[int] = None,
-        ):
-            def decorator(fn):
-                if name is None:
-                    task_name = _gen_task_name(fn.__name__, fn.__module__)
-                else:
-                    task_name = name
-                annotated_task = AnnotatedTask(
-                    fn=fn,
-                    bind=bind,
-                    ignore_result=ignore_result,
-                    max_retries=max_retries,
-                    task_name=task_name,
-                    app=self,
-                )
-                self._tasks_registry[task_name] = annotated_task
-                return annotated_task
-
-            return decorator
-
-        if len(args) == 1:
-            if callable(args[0]):
-                return create_annotated_task(**opts)(*args)
-            raise TypeError("argument 1 to @task() must be a callable")
-        if args:
-            raise TypeError(
-                f"@task() takes exactly 1 argument ({len(args) + len(opts)} given)",
+        def decorator(fn: Callable[..., Any]) -> AnnotatedTask:
+            if name is None:
+                task_name = _gen_task_name(fn.__name__, fn.__module__)
+            else:
+                task_name = name
+            annotated_task = AnnotatedTask(
+                fn=fn,
+                bind=bind,
+                ignore_result=ignore_result,
+                max_retries=max_retries,
+                default_retry_delay=default_retry_delay,
+                name=task_name,
+                queue=queue,
+                priority=priority,
+                app=self,
             )
-        return create_annotated_task(**opts)
+            self._tasks_registry[task_name] = annotated_task
+            return annotated_task
 
-    def _get_annotated_task(self, task_name: str) -> AnnotatedTask:
+        if not args:
+            return decorator
+        if len(args) == 1:
+            func = args[0]
+            if not callable(func):
+                msg = "argument 1 to @task() must be a callable"
+                raise TypeError(msg)
+            return decorator(func)
+        msg = "@task() takes exactly 1 argument"
+        raise TypeError(msg)
+
+    def get_annotated_task(self, task_name: str) -> AnnotatedTask:
         return self._tasks_registry[task_name]
 
-    def list_registered_task_names(self) -> List[str]:
+    def list_registered_task_names(self) -> list[str]:
         return sorted(self._tasks_registry)
 
-    def AsyncResult(self, task_id: str) -> _AsyncResult:
+    def AsyncResult(self, task_id: str) -> _AsyncResult:  # noqa: N802
         return _AsyncResult(task_id, app=self)
 
     async def send_task(  # noqa: PLR0913
         self,
         name: str,
         *,
-        args: Optional[Tuple[Any, ...]] = None,
-        kwargs: Optional[Dict[str, Any]] = None,
-        countdown: Optional[int] = None,
-        task_id: Optional[str] = None,
-        priority: Optional[int] = None,
-        queue: Optional[str] = None,
+        args: tuple[Any, ...] | None = None,
+        kwargs: dict[str, Any] | None = None,
+        countdown: int | None = None,
+        task_id: str | None = None,
+        priority: int | None = None,
+        queue: str | None = None,
     ) -> _AsyncResult:
-        task_id = task_id or str(uuid.uuid4())
-        routing_key = queue or self.conf.task_default_queue
-        logger.info("Sending task %s[%s] to queue %r ...", name, task_id, routing_key)
+        if task_id is None:
+            task_id = str(uuid.uuid4())
         await self.broker.publish_message(
             create_task_message(
                 task_id=task_id,
@@ -161,8 +176,10 @@ class Celery:
                 kwargs=kwargs,
                 priority=priority,
                 countdown=countdown,
+                parent_id=CURRENT_TASK_ID.get(),
+                root_id=CURRENT_ROOT_ID.get(),
             ),
-            routing_key=routing_key,
+            routing_key=first_not_null(queue, self.conf.task_default_queue),
         )
         return self.AsyncResult(task_id)
 

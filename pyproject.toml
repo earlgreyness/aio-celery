@@ -10,28 +10,12 @@ target-version = ["py38", "py39", "py310", "py311"]
 strict = true
 
 [tool.ruff]
-extend-select = [
-    "A",
-    "ARG",
-    "ASYNC",
-    "B",
-    "C4",
-    "COM",
-    "DTZ",
-    "ERA",
-    "I",
-    "ICN",
-    "ISC",
-    "PIE",
-    "PL",
-    "RET",
-    "RSE",
-    "RUF",
-    "Q",
-    "SIM",
-    "TID",
-    "W",
+select = [
+    "ALL",
 ]
 ignore = [
-    "E501",
+    "ANN101",
+    "ANN401",
+    "D",
 ]
+target-version = "py38"

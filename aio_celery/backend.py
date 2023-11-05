@@ -1,4 +1,6 @@
-from typing import TYPE_CHECKING
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     import redis.asyncio
@@ -8,29 +10,28 @@ def create_redis_connection_pool(
     *,
     url: str,
     pool_size: int,
-) -> "redis.asyncio.BlockingConnectionPool":
+) -> redis.asyncio.BlockingConnectionPool:
+    import redis.backoff
     from redis.asyncio import BlockingConnectionPool
     from redis.asyncio.retry import Retry
-    from redis.backoff import EqualJitterBackoff
 
-    try:
-        from redis.backoff import DEFAULT_BASE, DEFAULT_CAP
-    except ImportError:
-        # Maximum backoff between each retry in seconds
-        DEFAULT_CAP = 0.512
-        # Minimum backoff between each retry in seconds
-        DEFAULT_BASE = 0.008
+    default_base = getattr(redis.backoff, "DEFAULT_BASE", 0.008)
+    default_cap = getattr(redis.backoff, "DEFAULT_CAP", 0.512)
 
-    assert url.startswith("redis://")
-
-    return BlockingConnectionPool.from_url(
-        url=url,
-        max_connections=pool_size,
-        timeout=None,
-        socket_timeout=5,
-        retry_on_timeout=True,
-        retry=Retry(
-            backoff=EqualJitterBackoff(cap=DEFAULT_CAP, base=DEFAULT_BASE),
-            retries=5,
+    return cast(
+        BlockingConnectionPool,
+        BlockingConnectionPool.from_url(
+            url=url,
+            max_connections=pool_size,
+            timeout=None,
+            socket_timeout=5,
+            retry_on_timeout=True,
+            retry=Retry(
+                backoff=redis.backoff.EqualJitterBackoff(
+                    cap=default_cap,
+                    base=default_base,
+                ),
+                retries=5,
+            ),
         ),
     )
