@@ -33,7 +33,7 @@ class AnnotatedTask:
         kwargs: dict[str, Any] | None = None,
         *,
         task_id: str | None = None,
-        countdown: int | None = None,
+        countdown: float | None = None,
         priority: int | None = None,
         queue: str | None = None,
     ) -> AsyncResult:

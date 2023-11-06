@@ -161,7 +161,7 @@ class Celery:
         *,
         args: tuple[Any, ...] | None = None,
         kwargs: dict[str, Any] | None = None,
-        countdown: int | None = None,
+        countdown: float | None = None,
         task_id: str | None = None,
         priority: int | None = None,
         queue: str | None = None,

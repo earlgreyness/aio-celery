@@ -20,6 +20,7 @@ from yarl import URL
 from .app import Celery
 from .context import CURRENT_ROOT_ID, CURRENT_TASK_ID
 from .exceptions import MaxRetriesExceededError, Retry
+from .request import Request
 from .task import Task
 
 if TYPE_CHECKING:
@@ -44,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 async def _sleep_if_necessary(task: Task) -> None:
-    eta: datetime.datetime | None = task.eta
+    eta: datetime.datetime | None = task.request.eta
     if eta is None:
         return
     now = datetime.datetime.now().astimezone()
@@ -52,7 +53,7 @@ async def _sleep_if_necessary(task: Task) -> None:
         delta: datetime.timedelta = eta - now
         logger.info(
             "[%s] Sleeping for %s until task ETA %s ...",
-            task.task_id,
+            task.request.id,
             delta,
             eta,
         )
@@ -67,7 +68,7 @@ async def _handle_task_result(
     if (
         task.app.conf.task_ignore_result
         or annotated_task.ignore_result
-        or task.ignore_result
+        or task.request.ignore_result
     ):
         return
     await task.update_state(state="SUCCESS", meta=result, _finalize=True)
@@ -84,14 +85,14 @@ async def _handle_task_retry(
     logger.info(
         "Task %s[%s] retry: %s",
         task.name,
-        task.task_id,
+        task.request.id,
         exc,
     )
     max_retries = annotated_task.max_retries
-    if max_retries is not None and task.get_already_happened_retries() > max_retries:
+    if max_retries is not None and task.request.retries > max_retries:
         msg = (
-            f"Can't retry {task.name}[{task.task_id}] args:{task.args}"
-            f" kwargs:{task.kwargs} max_retries:{max_retries}"
+            f"Can't retry {task.name}[{task.request.id}] args:{task.request.args}"
+            f" kwargs:{task.request.kwargs} max_retries:{max_retries}"
         )
         raise MaxRetriesExceededError(msg)
     await app.broker.publish_message(
@@ -144,19 +145,21 @@ async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
                 await message.reject()
                 return
 
-            task = Task.from_raw_message(
-                message,
+            task = Task(
                 app=app,
-                annotated_task=annotated_task,
+                request=Request.from_message(message),
+                _default_retry_delay=annotated_task.default_retry_delay,
             )
             await _sleep_if_necessary(task)
 
             timestamp_start = time.monotonic()
-            args = (task, *task.args) if annotated_task.bind else task.args
-            soft_time_limit = task.task_soft_time_limit
+            args = (
+                (task, *task.request.args) if annotated_task.bind else task.request.args
+            )
+            soft_time_limit = task.request.timelimit[0] or app.conf.task_soft_time_limit
             try:
                 async with asyncio.timeouts.timeout(soft_time_limit):
-                    result = await annotated_task.fn(*args, **task.kwargs)
+                    result = await annotated_task.fn(*args, **task.request.kwargs)
             except Retry as exc:
                 await _handle_task_retry(
                     task=task,
@@ -182,7 +185,7 @@ async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
                 logger.info(
                     "Task %s[%s] succeeded in %.6fs: %r",
                     task.name,
-                    task.task_id,
+                    task.request.id,
                     time.monotonic() - timestamp_start,
                     result,
                 )

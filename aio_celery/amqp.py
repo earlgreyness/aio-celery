@@ -18,7 +18,7 @@ def create_task_message(  # noqa: PLR0913
     root_id: str | None,
     chain: list[dict[str, Any]] | None = None,
     ignore_result: bool = False,
-    countdown: int | None = None,
+    countdown: float | None = None,
     reply_to: str = "",
 ) -> Message:
     args = args or ()
