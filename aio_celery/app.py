@@ -4,7 +4,6 @@ import contextlib
 import logging
 import sys
 import uuid
-from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -28,12 +27,6 @@ if TYPE_CHECKING:
     import redis.asyncio
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class _CompleteTaskResources:
-    context: Any
-    redis_client_celery: Any
 
 
 class Celery:
