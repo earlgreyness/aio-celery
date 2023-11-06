@@ -3,14 +3,15 @@ from __future__ import annotations
 import copy
 import datetime
 import json
+import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional, cast
+from typing import TYPE_CHECKING, Any, Optional, Tuple, cast
 
 if TYPE_CHECKING:
     from aio_pika import IncomingMessage, Message
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True)
 class Request:
     message: IncomingMessage
 
@@ -31,9 +32,18 @@ class Request:
     def from_message(cls: type[Request], message: IncomingMessage) -> Request:
         headers = message.headers
         args, kwargs, options = json.loads(message.body)
-        eta = headers["eta"]
-        if eta is not None:
-            eta = datetime.datetime.fromisoformat(str(eta))
+        raw_eta = cast(Optional[str], headers["eta"])
+        eta: datetime.datetime | None
+        if raw_eta is not None:
+            if sys.version_info >= (3, 11):
+                eta = datetime.datetime.fromisoformat(raw_eta)
+            else:
+                eta = datetime.datetime.strptime(raw_eta, "%Y-%m-%dT%H:%M:%S.%f%z")
+            if eta.tzinfo is None or eta.tzinfo.utcoffset(eta) is None:
+                msg = "eta must be a timezone aware datetime object"
+                raise RuntimeError(msg)
+        else:
+            eta = None
         return cls(
             message=message,
             id=str(headers["id"]),
@@ -46,7 +56,7 @@ class Request:
             group=cast(Optional[str], headers["group"]),
             root_id=cast(str, headers["root_id"]),
             ignore_result=bool(headers["ignore_result"]),
-            timelimit=cast(tuple[Optional[int], Optional[int]], headers["timelimit"]),
+            timelimit=cast(Tuple[Optional[int], Optional[int]], headers["timelimit"]),
             chain=options["chain"],
         )
 

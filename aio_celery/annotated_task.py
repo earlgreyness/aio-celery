@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from .utils import first_not_null
 
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class AnnotatedTask:
-    fn: Callable[..., Any]
+    fn: Callable[..., Awaitable[Any]]
     bind: bool
     ignore_result: bool | None
     max_retries: int | None

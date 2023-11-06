@@ -9,6 +9,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncIterator,
+    Awaitable,
     Callable,
 )
 
@@ -105,7 +106,7 @@ class Celery:
 
     def task(  # noqa: PLR0913
         self,
-        *args: Callable[..., Any],
+        *args: Callable[..., Awaitable[Any]],
         bind: bool = False,
         name: str | None = None,
         ignore_result: bool | None = None,
@@ -113,10 +114,10 @@ class Celery:
         default_retry_delay: int = 180,
         queue: str | None = None,
         priority: int | None = None,
-    ) -> AnnotatedTask | Callable[[Callable[..., Any]], AnnotatedTask]:
+    ) -> AnnotatedTask | Callable[[Callable[..., Awaitable[Any]]], AnnotatedTask]:
         """Create a task class out of any callable."""
 
-        def decorator(fn: Callable[..., Any]) -> AnnotatedTask:
+        def decorator(fn: Callable[..., Awaitable[Any]]) -> AnnotatedTask:
             if name is None:
                 task_name = _gen_task_name(fn.__name__, fn.__module__)
             else:

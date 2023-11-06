@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import asyncio.exceptions
-import asyncio.timeouts
 import contextlib
 import datetime
 import functools
@@ -12,7 +11,7 @@ import pathlib
 import sys
 import time
 import urllib.parse
-from typing import TYPE_CHECKING, Any, Iterator, Optional, cast
+from typing import TYPE_CHECKING, Any, Awaitable, Iterator, Optional, cast
 
 import aiormq.exceptions
 from yarl import URL
@@ -104,7 +103,7 @@ async def _handle_task_retry(
 async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
     task_id: str | None = None
     task_name: str | None = None
-    soft_time_limit = app.conf.task_soft_time_limit
+    soft_time_limit: float | None = app.conf.task_soft_time_limit
     try:
         async with message.process(ignore_processed=True):
             task_id = str(message.headers["id"])
@@ -157,9 +156,13 @@ async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
                 (task, *task.request.args) if annotated_task.bind else task.request.args
             )
             soft_time_limit = task.request.timelimit[0] or app.conf.task_soft_time_limit
+            coro: Awaitable[Any] = annotated_task.fn(*args, **task.request.kwargs)
             try:
-                async with asyncio.timeouts.timeout(soft_time_limit):
-                    result = await annotated_task.fn(*args, **task.request.kwargs)
+                if sys.version_info >= (3, 11):
+                    async with asyncio.timeout(soft_time_limit):
+                        result = await coro
+                else:
+                    result = await asyncio.wait_for(coro, timeout=soft_time_limit)
             except Retry as exc:
                 await _handle_task_retry(
                     task=task,
