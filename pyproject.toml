@@ -2,10 +2,6 @@
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
-[tool.black]
-preview = true
-target-version = ["py38", "py39", "py310", "py311"]
-
 [tool.mypy]
 strict = true
 
@@ -15,7 +11,11 @@ select = [
 ]
 ignore = [
     "ANN101",
+    "ANN102",
     "ANN401",
     "D",
 ]
 target-version = "py38"
+
+[tool.ruff.format]
+preview = true

@@ -6,8 +6,6 @@ import sys
 from . import __version__
 from .worker import run
 
-MAX_AMQP_PREFETCH_COUNT = 65535
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -77,10 +75,9 @@ def main() -> None:
         parser.print_help()
         return
 
-    if not (0 < args.concurrency <= MAX_AMQP_PREFETCH_COUNT):
+    if args.concurrency < 1:
         print(  # noqa: T201
-            "concurrency must be between 1 and 65535 "
-            "(latter is maximum AMQP 0-9-1 prefetch count)",
+            "concurrency must be larger than 1",
             file=sys.stderr,
         )
         sys.exit(2)

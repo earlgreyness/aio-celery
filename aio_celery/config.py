@@ -24,6 +24,9 @@ class DefaultConfig:
     # Broker Settings
     broker_url: str = "amqp://guest:guest@localhost:5672//"
 
+    # Worker
+    worker_prefetch_multiplier: int = 4
+
     def update(self, **options: int | bool | str | datetime.timedelta | None) -> None:
         fields = {f.name for f in dataclasses.fields(self.__class__)}
         for k, v in options.items():

@@ -40,6 +40,8 @@ BANNER = """\
 {queues}
 """
 
+MAX_AMQP_PREFETCH_COUNT = 65535
+
 logger = logging.getLogger(__name__)
 
 
@@ -100,10 +102,14 @@ async def _handle_task_retry(
     )
 
 
-async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
+async def on_message_received(
+    message: IncomingMessage,
+    *,
+    app: Celery,
+    semaphore: asyncio.Semaphore,
+) -> None:
     task_id: str | None = None
     task_name: str | None = None
-    soft_time_limit: float | None = app.conf.task_soft_time_limit
     try:
         async with message.process(ignore_processed=True):
             task_id = str(message.headers["id"])
@@ -151,60 +157,60 @@ async def on_message_received(message: IncomingMessage, *, app: Celery) -> None:
             )
             await _sleep_if_necessary(task)
 
-            timestamp_start = time.monotonic()
-            args = (
-                (task, *task.request.args) if annotated_task.bind else task.request.args
-            )
-            soft_time_limit = task.request.timelimit[0] or app.conf.task_soft_time_limit
-            coro: Awaitable[Any] = annotated_task.fn(*args, **task.request.kwargs)
-            try:
-                if sys.version_info >= (3, 11):
-                    async with asyncio.timeout(soft_time_limit):
+            async with semaphore:
+                timestamp_start = time.monotonic()
+                args = (
+                    (task, *task.request.args)
+                    if annotated_task.bind
+                    else task.request.args
+                )
+                soft_time_limit = (
+                    task.request.timelimit[0] or app.conf.task_soft_time_limit
+                )
+                coro: Awaitable[Any] = annotated_task.fn(*args, **task.request.kwargs)
+                try:
+                    if soft_time_limit is None:
                         result = await coro
-                else:
-                    result = await asyncio.wait_for(coro, timeout=soft_time_limit)
-            except Retry as exc:
-                await _handle_task_retry(
-                    task=task,
-                    annotated_task=annotated_task,
-                    app=app,
-                    exc=exc,
-                    message=message,
-                )
-            else:
-                await _handle_task_result(
-                    task=task,
-                    annotated_task=annotated_task,
-                    result=result,
-                )
-                next_message, next_routing_key = task.build_next_task_message(
-                    result=result,
-                )
-                if next_message is not None:
-                    await app.broker.publish_message(
-                        next_message,
-                        routing_key=next_routing_key,
+                    elif sys.version_info >= (3, 11):
+                        async with asyncio.timeout(soft_time_limit):
+                            result = await coro
+                    else:
+                        result = await asyncio.wait_for(coro, timeout=soft_time_limit)
+                except Retry as exc:
+                    await _handle_task_retry(
+                        task=task,
+                        annotated_task=annotated_task,
+                        app=app,
+                        exc=exc,
+                        message=message,
                     )
-                logger.info(
-                    "Task %s[%s] succeeded in %.6fs: %r",
-                    task.name,
-                    task.request.id,
-                    time.monotonic() - timestamp_start,
-                    result,
-                )
+                else:
+                    await _handle_task_result(
+                        task=task,
+                        annotated_task=annotated_task,
+                        result=result,
+                    )
+                    next_message, next_routing_key = task.build_next_task_message(
+                        result=result,
+                    )
+                    if next_message is not None:
+                        await app.broker.publish_message(
+                            next_message,
+                            routing_key=next_routing_key,
+                        )
+                    logger.info(
+                        "Task %s[%s] succeeded in %.6fs: %r",
+                        task.name,
+                        task.request.id,
+                        time.monotonic() - timestamp_start,
+                        result,
+                    )
     except aiormq.exceptions.ChannelInvalidStateError:
         pass
     # This does not catch asyncio.exceptions.CancelledError since
     # the latter inherits directly from BaseException — not from Exception.
     # And that is okay for us. CancelledError is not meant to be caught.
-    except Exception as err:
-        if isinstance(err, asyncio.exceptions.TimeoutError):
-            logger.warning(
-                "Soft time limit (%ss) exceeded for %s[%s]",
-                soft_time_limit,
-                task_name,
-                task_id,
-            )
+    except Exception:
         logger.exception(
             "Task %s[%s] raised unexpected:",
             task_name,
@@ -294,9 +300,21 @@ async def run(args: argparse.Namespace) -> None:
     )
 
     async with app.setup():
-        await app.broker.set_qos(prefetch_count=args.concurrency)
+        semaphore = asyncio.Semaphore(args.concurrency)
+        prefetch_count = min(
+            app.conf.worker_prefetch_multiplier * args.concurrency,
+            MAX_AMQP_PREFETCH_COUNT,
+        )
+        if prefetch_count > 0:
+            await app.broker.set_qos(prefetch_count=prefetch_count)
         queues = [await app.broker.declare_queue(name) for name in queue_names]
         for queue in queues:
-            await queue.consume(functools.partial(on_message_received, app=app))
+            await queue.consume(
+                functools.partial(
+                    on_message_received,
+                    app=app,
+                    semaphore=semaphore,
+                ),
+            )
         logger.info("Waiting for messages. To exit press CTRL+C")
         await asyncio.Future()
