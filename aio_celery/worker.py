@@ -53,12 +53,18 @@ async def _sleep_if_necessary(task: Task) -> None:
     if eta > now:
         delta: datetime.timedelta = eta - now
         logger.info(
-            "[%s] Sleeping for %s until task ETA %s ...",
+            "Task %s[%s] Sleeping for %s until task ETA %s ...",
+            task.request.task,
             task.request.id,
             delta,
             eta,
         )
         await asyncio.sleep(delta.total_seconds())
+        logger.info(
+            "Task %s[%s] Sleeping FINISHED",
+            task.request.task,
+            task.request.id,
+        )
 
 
 async def _handle_task_result(
@@ -155,9 +161,21 @@ async def on_message_received(
                 request=Request.from_message(message),
                 _default_retry_delay=annotated_task.default_retry_delay,
             )
+            logger.debug(
+                "Task %s[%s] args=%r kwargs=%r",
+                task_name,
+                task_id,
+                task.request.args,
+                task.request.kwargs,
+            )
             await _sleep_if_necessary(task)
 
             async with semaphore:
+                logger.debug(
+                    "Task %s[%s] started executing after acquiring semaphore",
+                    task_name,
+                    task_id,
+                )
                 timestamp_start = time.monotonic()
                 args = (
                     (task, *task.request.args)
