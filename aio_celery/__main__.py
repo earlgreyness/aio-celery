@@ -64,6 +64,12 @@ def main() -> None:
         default="INFO",
         help="Logging level",
     )
+    worker.add_argument(
+        "--no-configure-logging",
+        action="store_false",
+        dest="configure_logging",
+        help="Use this parameter if your application configures custom logging.",
+    )
 
     args = parser.parse_args()
 
