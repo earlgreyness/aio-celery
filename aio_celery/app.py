@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import dataclasses
 import logging
 import sys
 import uuid
@@ -115,6 +117,9 @@ class Celery:
                 task_name = _gen_task_name(fn.__name__, fn.__module__)
             else:
                 task_name = name
+            if not asyncio.iscoroutinefunction(fn):
+                msg_ = f"Task {task_name!r} ({fn}) must be a coroutine"
+                raise TypeError(msg_)
             annotated_task = AnnotatedTask(
                 fn=fn,
                 bind=bind,
@@ -140,11 +145,18 @@ class Celery:
         msg = "@task() takes exactly 1 argument"
         raise TypeError(msg)
 
+    def _construct_extended_task_registry(self) -> dict[str, AnnotatedTask]:
+        registry: dict[str, AnnotatedTask] = {}
+        for name, task in _SHARED_APP._tasks_registry.items():  # noqa: SLF001
+            registry[name] = dataclasses.replace(task, app=self)
+        registry.update(self._tasks_registry)
+        return registry
+
     def get_annotated_task(self, task_name: str) -> AnnotatedTask:
-        return self._tasks_registry[task_name]
+        return self._construct_extended_task_registry()[task_name]
 
     def list_registered_task_names(self) -> list[str]:
-        return sorted(self._tasks_registry)
+        return sorted(self._construct_extended_task_registry())
 
     def AsyncResult(self, task_id: str) -> _AsyncResult:  # noqa: N802
         return _AsyncResult(task_id, app=self)
@@ -190,3 +202,13 @@ def _gen_task_name(name: str, module_name: str) -> str:
     if module is not None:
         module_name = module.__name__
     return ".".join(p for p in (module_name, name) if p)
+
+
+_SHARED_APP = Celery()
+
+
+def shared_task(
+    *args: Callable[..., Awaitable[Any]],
+    **kwargs: Any,
+) -> AnnotatedTask | Callable[[Callable[..., Awaitable[Any]]], AnnotatedTask]:
+    return _SHARED_APP.task(*args, **kwargs)

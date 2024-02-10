@@ -246,6 +246,21 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+### Register tasks using `@shared_task` decorator
+
+Analogous to original Celery [feature](https://docs.celeryq.dev/en/latest/django/first-steps-with-django.html#using-the-shared-task-decorator),
+the `@shared_task` decorator lets you create tasks without having any concrete app instance:
+
+```python
+from aio_celery import Celery, shared_task
+
+@shared_task
+async def add(a, b):
+    return a + b
+
+app = Celery()  # `add` task is already registered on `app` instance
+```
+
 References
 ----------
 
