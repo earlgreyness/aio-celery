@@ -187,13 +187,19 @@ async def on_message_received(
                 )
                 coro: Awaitable[Any] = annotated_task.fn(*args, **task.request.kwargs)
                 try:
-                    if soft_time_limit is None:
-                        result = await coro
-                    elif sys.version_info >= (3, 11):
-                        async with asyncio.timeout(soft_time_limit):
+                    try:
+                        if soft_time_limit is None:
                             result = await coro
-                    else:
-                        result = await asyncio.wait_for(coro, timeout=soft_time_limit)
+                        elif sys.version_info >= (3, 11):
+                            async with asyncio.timeout(soft_time_limit):
+                                result = await coro
+                        else:
+                            result = await asyncio.wait_for(
+                                coro,
+                                timeout=soft_time_limit,
+                            )
+                    except annotated_task.autoretry_for:
+                        await task.retry()
                 except Retry as exc:
                     await _handle_task_retry(
                         task=task,

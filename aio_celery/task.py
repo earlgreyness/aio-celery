@@ -101,7 +101,10 @@ class Task:
 
     async def retry(self, *, countdown: float | None = None) -> None:
         delay = datetime.timedelta(
-            seconds=countdown if countdown is not None else self._default_retry_delay,
+            seconds=first_not_null(
+                countdown,
+                self._default_retry_delay,
+            ),
         )
         raise Retry(
             message=self.request.build_retry_message(countdown=delay),

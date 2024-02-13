@@ -107,6 +107,7 @@ class Celery:
         ignore_result: bool | None = None,
         max_retries: int | None = 3,
         default_retry_delay: int = 180,
+        autoretry_for: tuple[type[Exception]] = (),
         queue: str | None = None,
         priority: int | None = None,
     ) -> AnnotatedTask | Callable[[Callable[..., Awaitable[Any]]], AnnotatedTask]:
@@ -126,6 +127,7 @@ class Celery:
                 ignore_result=ignore_result,
                 max_retries=max_retries,
                 default_retry_delay=default_retry_delay,
+                autoretry_for=autoretry_for,
                 name=task_name,
                 queue=queue,
                 priority=priority,

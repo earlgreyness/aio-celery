@@ -17,6 +17,7 @@ class AnnotatedTask:
     ignore_result: bool | None
     max_retries: int | None
     default_retry_delay: int
+    autoretry_for: tuple[type[Exception]]
     app: Celery
     name: str
     queue: str | None
