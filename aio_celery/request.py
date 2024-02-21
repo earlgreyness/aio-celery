@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 class Request:
     message: IncomingMessage
 
-    id: str  # noqa: A003
+    id: str
     task: str
     args: tuple[Any, ...]
     kwargs: dict[str, Any]

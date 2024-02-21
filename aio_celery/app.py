@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import dataclasses
 import logging
 import sys
 import uuid
@@ -12,6 +11,7 @@ from typing import (
     AsyncIterator,
     Awaitable,
     Callable,
+    Optional,
 )
 
 import aio_pika
@@ -32,7 +32,8 @@ logger = logging.getLogger(__name__)
 
 
 class Celery:
-    def __init__(self) -> None:
+    def __init__(self, name: Optional[str] = None) -> None:
+        self.name = name
         self.conf = DefaultConfig()
         self._tasks_registry: dict[str, AnnotatedTask] = {}
         self._app_context: Any = None
@@ -44,6 +45,9 @@ class Celery:
             [],
             contextlib.AbstractAsyncContextManager[Any],
         ] = _setup_nothing
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__} {self.name} at {hex(id(self))}>"
 
     def define_app_context(
         self,
@@ -107,7 +111,7 @@ class Celery:
         ignore_result: bool | None = None,
         max_retries: int | None = 3,
         default_retry_delay: int = 180,
-        autoretry_for: tuple[type[Exception]] = (),
+        autoretry_for: tuple[type[Exception], ...] = (),
         queue: str | None = None,
         priority: int | None = None,
     ) -> AnnotatedTask | Callable[[Callable[..., Awaitable[Any]]], AnnotatedTask]:
@@ -150,7 +154,8 @@ class Celery:
     def _construct_extended_task_registry(self) -> dict[str, AnnotatedTask]:
         registry: dict[str, AnnotatedTask] = {}
         for name, task in _SHARED_APP._tasks_registry.items():  # noqa: SLF001
-            registry[name] = dataclasses.replace(task, app=self)
+            task.app = self
+            registry[name] = task
         registry.update(self._tasks_registry)
         return registry
 

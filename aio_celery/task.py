@@ -55,9 +55,9 @@ class Task:
             "task_id": self.request.id,
         }
         if _finalize:
-            payload["date_done"] = (
-                datetime.datetime.utcnow().isoformat()  # noqa: DTZ003
-            )
+            payload["date_done"] = datetime.datetime.now(
+                datetime.timezone.utc,
+            ).isoformat()
         if self.request.group is not None:
             payload["group_id"] = self.request.group
         if self.request.parent_id is not None:

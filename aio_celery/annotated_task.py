@@ -10,14 +10,14 @@ if TYPE_CHECKING:
     from .result import AsyncResult
 
 
-@dataclass(frozen=True)
+@dataclass
 class AnnotatedTask:
     fn: Callable[..., Awaitable[Any]]
     bind: bool
     ignore_result: bool | None
     max_retries: int | None
     default_retry_delay: int
-    autoretry_for: tuple[type[Exception]]
+    autoretry_for: tuple[type[Exception], ...]
     app: Celery
     name: str
     queue: str | None

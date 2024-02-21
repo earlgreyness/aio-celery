@@ -108,7 +108,7 @@ async def _handle_task_retry(
     )
 
 
-async def on_message_received(
+async def on_message_received(  # noqa: PLR0915
     message: IncomingMessage,
     *,
     app: Celery,
