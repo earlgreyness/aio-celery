@@ -6,16 +6,19 @@ build-backend = "setuptools.build_meta"
 strict = true
 
 [tool.ruff]
-select = [
-    "ALL",
-]
-ignore = [
-    "ANN101",
-    "ANN102",
-    "ANN401",
-    "D",
-]
+preview = true
 target-version = "py38"
 
 [tool.ruff.format]
 preview = true
+
+[tool.ruff.lint]
+preview = true
+select = [
+    "ALL",
+]
+ignore = [
+    "ANN401",
+    "CPY001",
+    "D",
+]

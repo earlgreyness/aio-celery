@@ -116,7 +116,7 @@ async def on_message_received(  # noqa: PLR0915
 ) -> None:
     task_id: str | None = None
     task_name: str | None = None
-    try:
+    try:  # noqa: PLR1702
         async with message.process(ignore_processed=True):
             task_id = str(message.headers["id"])
             task_name = str(message.headers["task"])

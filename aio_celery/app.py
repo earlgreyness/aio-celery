@@ -11,11 +11,11 @@ from typing import (
     AsyncIterator,
     Awaitable,
     Callable,
-    Optional,
 )
 
 import aio_pika
 
+from ._state import set_current_app
 from .amqp import create_task_message
 from .annotated_task import AnnotatedTask
 from .backend import create_redis_connection_pool
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 class Celery:
-    def __init__(self, name: Optional[str] = None) -> None:
+    def __init__(self, name: str | None = None) -> None:
         self.name = name
         self.conf = DefaultConfig()
         self._tasks_registry: dict[str, AnnotatedTask] = {}
@@ -75,7 +75,7 @@ class Celery:
         if self._result_backend_connection_pool is None:
             return None
 
-        from redis.asyncio import Redis
+        from redis.asyncio import Redis  # noqa: PLC0415
 
         return Redis(connection_pool=self._result_backend_connection_pool)
 
@@ -87,6 +87,7 @@ class Celery:
                 rabbitmq_channel=channel,
                 task_queue_max_priority=self.conf.task_queue_max_priority,
             )
+            set_current_app(self)
             try:
                 if self.conf.result_backend is not None:
                     self._result_backend_connection_pool = create_redis_connection_pool(
@@ -100,6 +101,7 @@ class Celery:
                     finally:
                         logger.warning("Shutting down application.")
             finally:
+                set_current_app(None)
                 if self._result_backend_connection_pool is not None:
                     await self._result_backend_connection_pool.disconnect()
 
@@ -178,6 +180,7 @@ class Celery:
         task_id: str | None = None,
         priority: int | None = None,
         queue: str | None = None,
+        chain: list[dict[str, Any]] | None = None,
     ) -> _AsyncResult:
         if task_id is None:
             task_id = str(uuid.uuid4())
@@ -187,10 +190,11 @@ class Celery:
                 task_name=name,
                 args=args,
                 kwargs=kwargs,
-                priority=priority,
+                priority=first_not_null(priority, self.conf.task_default_priority),
                 countdown=countdown,
                 parent_id=CURRENT_TASK_ID.get(),
                 root_id=CURRENT_ROOT_ID.get(),
+                chain=chain,
             ),
             routing_key=first_not_null(queue, self.conf.task_default_queue),
         )

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from .canvas import Signature
 from .utils import first_not_null
 
 if TYPE_CHECKING:
@@ -28,29 +29,20 @@ class AnnotatedTask:
             return self.fn(None, *args, **kwargs)
         return self.fn(*args, **kwargs)
 
-    async def apply_async(  # noqa: PLR0913
-        self,
-        args: tuple[Any, ...] | None = None,
-        kwargs: dict[str, Any] | None = None,
-        *,
-        task_id: str | None = None,
-        countdown: float | None = None,
-        priority: int | None = None,
-        queue: str | None = None,
-    ) -> AsyncResult:
-        return await self.app.send_task(
-            self.name,
-            args=args,
-            kwargs=kwargs,
-            countdown=countdown,
-            task_id=task_id,
-            priority=first_not_null(
-                priority,
-                self.priority,
-                self.app.conf.task_default_priority,
-            ),
-            queue=first_not_null(queue, self.queue),
-        )
+    async def apply_async(self, **options: Any) -> AsyncResult:
+        return await self.signature(**options).apply_async()
 
     async def delay(self, *args: Any, **kwargs: Any) -> AsyncResult:
         return await self.apply_async(args=args, kwargs=kwargs)
+
+    def signature(self, **options: Any) -> Signature:
+        priority = first_not_null(options.get("priority"), self.priority)
+        queue = first_not_null(options.get("queue"), self.queue)
+        if priority is not None:
+            options["priority"] = priority
+        if queue is not None:
+            options["queue"] = queue
+        return Signature(self.name, **options)
+
+    def s(self, *args: Any, **kwargs: Any) -> Signature:
+        return self.signature(args=args, kwargs=kwargs)

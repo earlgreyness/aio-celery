@@ -11,9 +11,9 @@ def create_redis_connection_pool(
     url: str,
     pool_size: int,
 ) -> redis.asyncio.BlockingConnectionPool:
-    import redis.backoff
-    from redis.asyncio import BlockingConnectionPool
-    from redis.asyncio.retry import Retry
+    import redis.backoff  # noqa: PLC0415
+    from redis.asyncio import BlockingConnectionPool  # noqa: PLC0415
+    from redis.asyncio.retry import Retry  # noqa: PLC0415
 
     default_base = getattr(redis.backoff, "DEFAULT_BASE", 0.008)
     default_cap = getattr(redis.backoff, "DEFAULT_CAP", 0.512)

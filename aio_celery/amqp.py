@@ -57,7 +57,7 @@ def create_task_message(  # noqa: PLR0913
             {
                 "callbacks": None,
                 "errbacks": None,
-                "chain": chain,
+                "chain": chain or None,
                 "chord": None,
             },
         ),
