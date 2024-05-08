@@ -15,13 +15,10 @@ class Signature(dict[str, Any]):
     def __init__(  # noqa: PLR0913
         self,
         task: str,
-        *,
         args: tuple[Any, ...] | None = None,
         kwargs: dict[str, Any] | None = None,
+        *,
         options: dict[str, Any] | None = None,
-        type: Any = None,  # noqa: A002,ARG002
-        subtask_type: str | None = None,
-        immutable: bool = False,
         app: Celery | None = None,
         **ex: Any,
     ) -> None:
@@ -31,8 +28,8 @@ class Signature(dict[str, Any]):
             args=tuple(args or ()),
             kwargs=kwargs or {},
             options=dict(options or {}, **ex),
-            subtask_type=subtask_type,
-            immutable=immutable,
+            subtask_type=None,
+            immutable=False,
         )
 
     @staticmethod

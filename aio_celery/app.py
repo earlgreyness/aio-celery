@@ -202,7 +202,7 @@ class Celery:
 
 
 @contextlib.asynccontextmanager
-async def _setup_nothing() -> AsyncIterator[None]:
+async def _setup_nothing() -> AsyncIterator[None]:  # noqa: RUF029
     yield None
 
 

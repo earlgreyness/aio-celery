@@ -27,6 +27,9 @@ class DefaultConfig:
     # Worker
     worker_prefetch_multiplier: int = 4
 
+    # Sentry SDK
+    enable_sentry_sdk: bool = False
+
     def update(self, **options: int | bool | str | datetime.timedelta | None) -> None:
         fields = {f.name for f in dataclasses.fields(self.__class__)}
         for k, v in options.items():

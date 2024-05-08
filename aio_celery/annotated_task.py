@@ -26,7 +26,7 @@ class AnnotatedTask:
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         if self.bind:
-            return self.fn(None, *args, **kwargs)
+            return self.fn(self, *args, **kwargs)
         return self.fn(*args, **kwargs)
 
     async def apply_async(self, **options: Any) -> AsyncResult:
