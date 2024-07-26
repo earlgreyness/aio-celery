@@ -6,7 +6,6 @@ build-backend = "setuptools.build_meta"
 strict = true
 
 [tool.ruff]
-preview = true
 target-version = "py38"
 
 [tool.ruff.format]

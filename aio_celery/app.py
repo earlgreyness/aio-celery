@@ -11,9 +11,11 @@ from typing import (
     AsyncIterator,
     Awaitable,
     Callable,
+    cast,
 )
 
 import aio_pika
+from aio_pika.abc import AbstractRobustChannel
 
 from ._state import set_current_app
 from .amqp import create_task_message
@@ -82,10 +84,12 @@ class Celery:
     @contextlib.asynccontextmanager
     async def setup(self) -> AsyncIterator[None]:
         connection = await aio_pika.connect_robust(self.conf.broker_url)
-        async with connection, connection.channel() as channel:
+        async with connection, connection.channel() as publishing_channel:
             self.broker = Broker(
-                rabbitmq_channel=channel,
+                broker_url=self.conf.broker_url,
+                broker_publish_timeout=self.conf.broker_publish_timeout,
                 task_queue_max_priority=self.conf.task_queue_max_priority,
+                publishing_channel=cast(AbstractRobustChannel, publishing_channel),
             )
             set_current_app(self)
             try:
@@ -116,6 +120,7 @@ class Celery:
         autoretry_for: tuple[type[Exception], ...] = (),
         queue: str | None = None,
         priority: int | None = None,
+        soft_time_limit: float | None = None,
     ) -> AnnotatedTask | Callable[[Callable[..., Awaitable[Any]]], AnnotatedTask]:
         """Create a task class out of any callable."""
 
@@ -137,6 +142,7 @@ class Celery:
                 name=task_name,
                 queue=queue,
                 priority=priority,
+                soft_time_limit=soft_time_limit,
                 app=self,
             )
             self._tasks_registry[task_name] = annotated_task

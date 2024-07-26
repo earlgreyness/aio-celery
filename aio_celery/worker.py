@@ -13,7 +13,8 @@ import time
 import urllib.parse
 from typing import TYPE_CHECKING, Any, Awaitable, Iterator, Optional, cast
 
-import aiormq.exceptions
+import aio_pika
+from aio_pika.abc import AbstractRobustChannel
 from yarl import URL
 
 from .app import Celery
@@ -21,13 +22,21 @@ from .context import CURRENT_ROOT_ID, CURRENT_TASK_ID
 from .exceptions import MaxRetriesExceededError, Retry
 from .request import Request
 from .task import Task
+from .utils import first_not_null
 
 if TYPE_CHECKING:
     import argparse
+    import types
 
     from aio_pika import IncomingMessage
 
     from .annotated_task import AnnotatedTask
+
+sentry_sdk: types.ModuleType | None
+try:
+    sentry_sdk = importlib.import_module("sentry_sdk")
+except ModuleNotFoundError:
+    sentry_sdk = None
 
 BANNER = """\
 [config]
@@ -77,8 +86,15 @@ async def _handle_task_result(
         or annotated_task.ignore_result
         or task.request.ignore_result
     ):
-        return
-    await task.update_state(state="SUCCESS", meta=result, _finalize=True)
+        pass
+    else:
+        await task.update_state(state="SUCCESS", meta=result, _finalize=True)
+    next_message, next_routing_key = task.build_next_task_message(result=result)
+    if next_message is not None:
+        await task.app.broker.publish_message(
+            next_message,
+            routing_key=next_routing_key,
+        )
 
 
 async def _handle_task_retry(
@@ -87,7 +103,6 @@ async def _handle_task_retry(
     annotated_task: AnnotatedTask,
     app: Celery,
     exc: Retry,
-    message: IncomingMessage,
 ) -> None:
     logger.info(
         "Task %s[%s] retry: %s",
@@ -104,68 +119,150 @@ async def _handle_task_retry(
         raise MaxRetriesExceededError(msg)
     await app.broker.publish_message(
         exc.message,
-        routing_key=(message.routing_key or app.conf.task_default_queue),
+        routing_key=(task.request.message.routing_key or app.conf.task_default_queue),
     )
 
 
-async def on_message_received(  # noqa: C901,PLR0915
+def _get_soft_time_limit(task: Task, annotated_task: AnnotatedTask) -> float | None:
+    return cast(
+        Optional[float],
+        first_not_null(
+            task.request.timelimit[0],
+            annotated_task.soft_time_limit,
+            task.app.conf.task_soft_time_limit,
+        ),
+    )
+
+
+def _setup_sentry_context(task: Task, annotated_task: AnnotatedTask) -> None:
+    if sentry_sdk is None:
+        return
+    sentry_sdk.set_tag("aio_celery_task_id", task.request.id)
+    sentry_sdk.set_context(
+        "aio-celery task",
+        {
+            "args": task.request.args,
+            "kwargs": task.request.kwargs,
+            "task_name": task.name,
+            "soft_time_limit": _get_soft_time_limit(task, annotated_task),
+        },
+    )
+
+
+async def _run_with_timeout(coro: Awaitable[Any], soft_time_limit: float | None) -> Any:
+    if soft_time_limit is None:
+        return await coro
+    if sys.version_info >= (3, 11):
+        async with asyncio.timeout(soft_time_limit):
+            return await coro
+    return await asyncio.wait_for(coro, timeout=soft_time_limit)
+
+
+def _log_unregistered_task(message: IncomingMessage) -> None:
+    logger.exception(
+        "Received unregistered task of type %r\n"
+        "The message has been ignored and discarded.\n\n"
+        "Did you remember to import the module containing this task?\n"
+        "Or maybe you're using relative imports?\n\n"
+        "Please see\n"
+        "https://docs.celeryq.dev/en/latest/internals/protocol.html\n"
+        "for more information.\n\n"
+        "The full contents of the message body was:\n"
+        "%r (%db)\n\n"
+        "The full contents of the message headers:\n"
+        "%r\n\n"
+        "The delivery info for this task is:\n"
+        "%r",
+        str(message.headers["task"]),
+        message.body,
+        len(message.body),
+        message.headers,
+        {
+            "consumer_tag": message.consumer_tag,
+            "delivery_tag": message.delivery_tag,
+            "redelivered": message.redelivered,
+            "exchange": message.exchange,
+            "routing_key": message.routing_key,
+        },
+    )
+
+
+async def _execute_task(
+    task: Task,
+    annotated_task: AnnotatedTask,
+    message: IncomingMessage,
+) -> None:
+    app = task.app
+    args = (task, *task.request.args) if annotated_task.bind else task.request.args
+    logger.debug(
+        "Task %s[%s] started executing after acquiring semaphore",
+        task.name,
+        task.request.id,
+    )
+    timestamp_start = time.monotonic()
+    try:
+        try:
+            result = await _run_with_timeout(
+                annotated_task.fn(*args, **task.request.kwargs),
+                _get_soft_time_limit(task, annotated_task),
+            )
+        except Retry:
+            raise
+        except Exception as exc:
+            if isinstance(exc, annotated_task.autoretry_for) or (
+                isinstance(exc, asyncio.TimeoutError)
+                and app.conf.worker_retry_task_on_asyncio_timeout_error
+            ):
+                await task.retry()
+            else:
+                await message.reject()
+            raise
+    except Retry as exc:
+        await _handle_task_retry(
+            task=task,
+            annotated_task=annotated_task,
+            app=app,
+            exc=exc,
+        )
+    else:
+        await _handle_task_result(
+            task=task,
+            annotated_task=annotated_task,
+            result=result,
+        )
+        logger.info(
+            "Task %s[%s] succeeded in %.6fs: %r",
+            task.name,
+            task.request.id,
+            time.monotonic() - timestamp_start,
+            result,
+        )
+
+
+async def on_message_received(
     message: IncomingMessage,
     *,
     app: Celery,
     semaphore: asyncio.Semaphore,
 ) -> None:
-    with contextlib.ExitStack() as stack:  # noqa: PLR1702
-        task_id: str | None = None
-        task_name: str | None = None
+    with contextlib.ExitStack() as stack:
+        if app.conf.enable_sentry_sdk and sentry_sdk is not None:
+            stack.enter_context(sentry_sdk.Hub(sentry_sdk.Hub.current))
 
-        sentry_sdk = None
-        if app.conf.enable_sentry_sdk:
-            try:
-                sentry_sdk = importlib.import_module("sentry_sdk")
-            except ModuleNotFoundError:
-                pass
-            else:
-                stack.enter_context(sentry_sdk.Hub(sentry_sdk.Hub.current))
+        task_id = str(message.headers["id"])
+        task_name = str(message.headers["task"])
+
+        CURRENT_ROOT_ID.set(cast(Optional[str], message.headers["root_id"]))
+        CURRENT_TASK_ID.set(task_id)
+
+        logger.info("Task %s[%s] received", task_name, task_id)
 
         try:
-            async with message.process(ignore_processed=True):
-                task_id = str(message.headers["id"])
-                task_name = str(message.headers["task"])
-                root_id = cast(Optional[str], message.headers["root_id"])
-                logger.info("Task %s[%s] received", task_name, task_id)
-                CURRENT_ROOT_ID.set(root_id)
-                CURRENT_TASK_ID.set(task_id)
-                if sentry_sdk is not None:
-                    sentry_sdk.set_tag("aio_celery_task_id", task_id)
+            async with message.process(ignore_processed=True, requeue=True):
                 try:
                     annotated_task = app.get_annotated_task(task_name)
                 except KeyError:
-                    logger.exception(
-                        "Received unregistered task of type %r\n"
-                        "The message has been ignored and discarded.\n\n"
-                        "Did you remember to import the module containing this task?\n"
-                        "Or maybe you're using relative imports?\n\n"
-                        "Please see\n"
-                        "https://docs.celeryq.dev/en/latest/internals/protocol.html\n"
-                        "for more information.\n\n"
-                        "The full contents of the message body was:\n"
-                        "%r (%db)\n\n"
-                        "The full contents of the message headers:\n"
-                        "%r\n\n"
-                        "The delivery info for this task is:\n"
-                        "%r",
-                        task_name,
-                        message.body,
-                        len(message.body),
-                        message.headers,
-                        {
-                            "consumer_tag": message.consumer_tag,
-                            "delivery_tag": message.delivery_tag,
-                            "redelivered": message.redelivered,
-                            "exchange": message.exchange,
-                            "routing_key": message.routing_key,
-                        },
-                    )
+                    _log_unregistered_task(message)
                     await message.reject()
                     return
 
@@ -174,94 +271,27 @@ async def on_message_received(  # noqa: C901,PLR0915
                     request=Request.from_message(message),
                     _default_retry_delay=annotated_task.default_retry_delay,
                 )
+
+                if app.conf.enable_sentry_sdk and sentry_sdk is not None:
+                    _setup_sentry_context(task, annotated_task)
+
                 logger.debug(
                     "Task %s[%s] args=%r kwargs=%r",
-                    task_name,
-                    task_id,
+                    task.name,
+                    task.request.id,
                     task.request.args,
                     task.request.kwargs,
                 )
-                args = (
-                    (task, *task.request.args)
-                    if annotated_task.bind
-                    else task.request.args
-                )
-                soft_time_limit = (
-                    task.request.timelimit[0] or app.conf.task_soft_time_limit
-                )
-                coro: Awaitable[Any] = annotated_task.fn(
-                    *args,
-                    **task.request.kwargs,
-                )
-                if sentry_sdk is not None:
-                    sentry_sdk.set_context(
-                        "aio-celery task",
-                        {
-                            "args": task.request.args,
-                            "kwargs": task.request.kwargs,
-                            "task_name": task_name,
-                            "soft_time_limit": soft_time_limit,
-                        },
-                    )
 
                 await _sleep_if_necessary(task)
 
                 async with semaphore:
-                    logger.debug(
-                        "Task %s[%s] started executing after acquiring semaphore",
-                        task_name,
-                        task_id,
-                    )
-                    timestamp_start = time.monotonic()
-                    try:
-                        try:
-                            if soft_time_limit is None:
-                                result = await coro
-                            elif sys.version_info >= (3, 11):
-                                async with asyncio.timeout(soft_time_limit):
-                                    result = await coro
-                            else:
-                                result = await asyncio.wait_for(
-                                    coro,
-                                    timeout=soft_time_limit,
-                                )
-                        except annotated_task.autoretry_for:
-                            await task.retry()
-                    except Retry as exc:
-                        await _handle_task_retry(
-                            task=task,
-                            annotated_task=annotated_task,
-                            app=app,
-                            exc=exc,
-                            message=message,
-                        )
-                    else:
-                        await _handle_task_result(
-                            task=task,
-                            annotated_task=annotated_task,
-                            result=result,
-                        )
-                        next_message, next_routing_key = task.build_next_task_message(
-                            result=result,
-                        )
-                        if next_message is not None:
-                            await app.broker.publish_message(
-                                next_message,
-                                routing_key=next_routing_key,
-                            )
-                        logger.info(
-                            "Task %s[%s] succeeded in %.6fs: %r",
-                            task.name,
-                            task.request.id,
-                            time.monotonic() - timestamp_start,
-                            result,
-                        )
-        except aiormq.exceptions.ChannelInvalidStateError:
-            pass
-        # This does not catch asyncio.exceptions.CancelledError since
-        # the latter inherits directly from BaseException — not from Exception.
-        # And that is okay for us. CancelledError is not meant to be caught.
+                    await _execute_task(task, annotated_task, message)
+
         except Exception:
+            # This does not catch asyncio.exceptions.CancelledError since
+            # the latter inherits directly from BaseException — not from Exception.
+            # And that is okay for us. CancelledError is not meant to be caught.
             logger.exception(
                 "Task %s[%s] raised unexpected:",
                 task_name,
@@ -357,16 +387,24 @@ async def run(args: argparse.Namespace) -> None:
             app.conf.worker_prefetch_multiplier * args.concurrency,
             MAX_AMQP_PREFETCH_COUNT,
         )
-        if prefetch_count > 0:
-            await app.broker.set_qos(prefetch_count=prefetch_count)
-        queues = [await app.broker.declare_queue(name) for name in queue_names]
-        for queue in queues:
-            await queue.consume(
-                functools.partial(
-                    on_message_received,
-                    app=app,
-                    semaphore=semaphore,
-                ),
-            )
-        logger.info("Waiting for messages. To exit press CTRL+C")
-        await asyncio.Future()
+        connection = await aio_pika.connect_robust(app.conf.broker_url)
+        async with connection, connection.channel() as channel:
+            if prefetch_count > 0:
+                await channel.set_qos(prefetch_count=prefetch_count)
+            queues = [
+                await app.broker.declare_queue(
+                    queue_name=name,
+                    channel=cast(AbstractRobustChannel, channel),
+                )
+                for name in queue_names
+            ]
+            for queue in queues:
+                await queue.consume(
+                    functools.partial(
+                        on_message_received,
+                        app=app,
+                        semaphore=semaphore,
+                    ),
+                )
+            logger.info("Waiting for messages. To exit press CTRL+C")
+            await asyncio.Future()

@@ -22,10 +22,12 @@ class DefaultConfig:
     task_queue_max_priority: int | None = None
 
     # Broker Settings
+    broker_publish_timeout: float | None = None
     broker_url: str = "amqp://guest:guest@localhost:5672//"
 
     # Worker
     worker_prefetch_multiplier: int = 4
+    worker_retry_task_on_asyncio_timeout_error: bool = False
 
     # Sentry SDK
     enable_sentry_sdk: bool = False

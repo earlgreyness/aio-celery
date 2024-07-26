@@ -23,6 +23,7 @@ class AnnotatedTask:
     name: str
     queue: str | None
     priority: int | None
+    soft_time_limit: float | None
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         if self.bind:
