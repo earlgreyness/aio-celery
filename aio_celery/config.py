@@ -9,7 +9,7 @@ from dataclasses import dataclass
 class DefaultConfig:
     # Task execution settings
     task_ignore_result: bool = False
-    task_soft_time_limit: int | None = None
+    task_soft_time_limit: float | None = None
 
     # Task result backend settings
     result_backend: str | None = None

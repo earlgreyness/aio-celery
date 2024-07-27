@@ -44,7 +44,11 @@ class AsyncResult:
     async def state(self) -> str:
         return str((await self._get_task_meta())["status"])
 
-    async def get(self, timeout: float | None = None, interval: float = 0.5) -> Any:
+    async def get(
+        self,
+        timeout: float | None = None,  # noqa: ASYNC109
+        interval: float = 0.5,
+    ) -> Any:
         """Wait until task is ready, and return its result."""
         value = await self._get_task_meta()
         start = time.monotonic()

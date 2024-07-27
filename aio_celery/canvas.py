@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 
 class Signature(dict[str, Any]):
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         task: str,
         args: tuple[Any, ...] | None = None,
