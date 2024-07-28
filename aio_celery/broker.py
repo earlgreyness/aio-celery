@@ -59,6 +59,7 @@ class Broker:
             name=queue_name,
             durable=True,
             arguments=arguments,
+            timeout=self._broker_publish_timeout,
         )
         self._already_declared_queues.add(queue_name)
         return queue

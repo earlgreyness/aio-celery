@@ -27,10 +27,20 @@ class DefaultConfig:
 
     # Worker
     worker_prefetch_multiplier: int = 4
+    # Raison d'être:
+    # The asyncio.timeout() context manager is what transforms
+    # the asyncio.CancelledError into a TimeoutError,
+    # which means the TimeoutError can only be caught outside of the context manager.
+    # (https://docs.python.org/3/library/asyncio-task.html#asyncio.timeout)
     worker_retry_task_on_asyncio_timeout_error: bool = False
 
     # Sentry SDK
     enable_sentry_sdk: bool = False
+
+    # Inspection HTTP server
+    inspection_http_server_is_enabled: bool = False
+    inspection_http_server_host: str = "localhost"
+    inspection_http_server_port: int = 1430
 
     def update(self, **options: int | bool | str | datetime.timedelta | None) -> None:
         fields = {f.name for f in dataclasses.fields(self.__class__)}

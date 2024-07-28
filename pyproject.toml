@@ -22,3 +22,8 @@ ignore = [
     "D",
     "DOC501",
 ]
+
+[tool.ruff.lint.isort]
+required-imports = [
+    "from __future__ import annotations",
+]

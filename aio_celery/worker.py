@@ -14,12 +14,15 @@ import urllib.parse
 from typing import TYPE_CHECKING, Any, Awaitable, Iterator, Optional, cast
 
 import aio_pika
+import aiormq.exceptions
 from aio_pika.abc import AbstractRobustChannel
 from yarl import URL
 
+from ._state import _STATE, RunningTask
 from .app import Celery
 from .context import CURRENT_ROOT_ID, CURRENT_TASK_ID
 from .exceptions import MaxRetriesExceededError, Retry
+from .inspect import inspection_http_handle
 from .request import Request
 from .task import Task
 from .utils import first_not_null
@@ -40,10 +43,11 @@ except ModuleNotFoundError:
 
 BANNER = """\
 [config]
-.> app:         {app}
-.> transport:   {conninfo}
-.> results:     {results}
-.> concurrency: {concurrency}
+.> app:                 {app}
+.> transport:           {conninfo}
+.> results:             {results}
+.> inspect http server: {inspect_http_server}
+.> concurrency:         {concurrency}
 
 [queues]
 {queues}
@@ -52,6 +56,10 @@ BANNER = """\
 MAX_AMQP_PREFETCH_COUNT = 65535
 
 logger = logging.getLogger(__name__)
+
+
+def _iso_now() -> str:
+    return datetime.datetime.now().astimezone().isoformat()
 
 
 async def _sleep_if_necessary(task: Task) -> None:
@@ -153,6 +161,7 @@ async def _run_with_timeout(coro: Awaitable[Any], soft_time_limit: float | None)
     if soft_time_limit is None:
         return await coro
     if sys.version_info >= (3, 11):
+        # https://stackoverflow.com/a/47004339
         async with asyncio.timeout(soft_time_limit):
             return await coro
     return await asyncio.wait_for(coro, timeout=soft_time_limit)
@@ -213,6 +222,11 @@ async def _execute_task(
                 isinstance(exc, asyncio.TimeoutError)
                 and app.conf.worker_retry_task_on_asyncio_timeout_error
             ):
+                logger.warning(
+                    "Task %s[%s] raised asyncio.TimeoutError, retrying...",
+                    task.name,
+                    task.request.id,
+                )
                 await task.retry()
             else:
                 await message.reject()
@@ -252,6 +266,15 @@ async def on_message_received(
         task_id = str(message.headers["id"])
         task_name = str(message.headers["task"])
 
+        running_task = RunningTask(
+            task_id=task_id,
+            task_name=task_name,
+            received=_iso_now(),
+            state="SLEEPING",
+        )
+        _STATE.running_tasks[task_id] = running_task
+        await asyncio.sleep(0)
+
         CURRENT_ROOT_ID.set(cast(Optional[str], message.headers["root_id"]))
         CURRENT_TASK_ID.set(task_id)
 
@@ -272,6 +295,18 @@ async def on_message_received(
                     _default_retry_delay=annotated_task.default_retry_delay,
                 )
 
+                running_task.args = task.request.args
+                running_task.kwargs = task.request.kwargs
+                running_task.eta = (
+                    task.request.eta.isoformat()
+                    if isinstance(task.request.eta, datetime.datetime)
+                    else None
+                )
+                running_task.soft_time_limit = _get_soft_time_limit(
+                    task,
+                    annotated_task,
+                )
+
                 if app.conf.enable_sentry_sdk and sentry_sdk is not None:
                     _setup_sentry_context(task, annotated_task)
 
@@ -284,10 +319,14 @@ async def on_message_received(
                 )
 
                 await _sleep_if_necessary(task)
+                running_task.state = "SEMAPHORE"
 
                 async with semaphore:
+                    running_task.state = "RUNNING"
+                    running_task.started = _iso_now()
                     await _execute_task(task, annotated_task, message)
-
+        except aiormq.exceptions.ChannelInvalidStateError:
+            pass
         except Exception:
             # This does not catch asyncio.exceptions.CancelledError since
             # the latter inherits directly from BaseException — not from Exception.
@@ -298,6 +337,9 @@ async def on_message_received(
                 task_id,
             )
         finally:
+            with contextlib.suppress(KeyError):
+                del _STATE.running_tasks[task_id]
+            await asyncio.sleep(0)
             CURRENT_ROOT_ID.set(None)
             CURRENT_TASK_ID.set(None)
 
@@ -337,6 +379,15 @@ def _print_intro(
     q = ".> " + "\n.> ".join(queue_names)
     t = "  . " + "\n  . ".join(task_names)
 
+    if app.conf.inspection_http_server_is_enabled:
+        inspect_http_server = (
+            "http://"
+            f"{app.conf.inspection_http_server_host}:"
+            f"{app.conf.inspection_http_server_port}/"
+        )
+    else:
+        inspect_http_server = "disabled://"
+
     def _normalize(u: str | None) -> str:
         if not u:
             return "disabled://"
@@ -351,6 +402,7 @@ def _print_intro(
         results=_normalize(app.conf.result_backend),
         concurrency=f"{concurrency} (asyncio)",
         queues=q,
+        inspect_http_server=inspect_http_server,
     ).splitlines()
     print(  # noqa: T201
         "╔═══════════════════════╗\n"
@@ -382,15 +434,25 @@ async def run(args: argparse.Namespace) -> None:
     )
 
     async with app.setup():
+        if app.conf.inspection_http_server_is_enabled:
+            server = await asyncio.start_server(
+                inspection_http_handle,
+                host=app.conf.inspection_http_server_host,
+                port=app.conf.inspection_http_server_port,
+            )
+
         semaphore = asyncio.Semaphore(args.concurrency)
         prefetch_count = min(
             app.conf.worker_prefetch_multiplier * args.concurrency,
             MAX_AMQP_PREFETCH_COUNT,
         )
         connection = await aio_pika.connect_robust(app.conf.broker_url)
-        async with connection, connection.channel() as channel:
+        async with server, connection, connection.channel() as channel:
             if prefetch_count > 0:
-                await channel.set_qos(prefetch_count=prefetch_count)
+                await channel.set_qos(
+                    prefetch_count=prefetch_count,
+                    timeout=app.conf.broker_publish_timeout,
+                )
             queues = [
                 await app.broker.declare_queue(
                     queue_name=name,
@@ -405,6 +467,7 @@ async def run(args: argparse.Namespace) -> None:
                         app=app,
                         semaphore=semaphore,
                     ),
+                    timeout=app.conf.broker_publish_timeout,
                 )
             logger.info("Waiting for messages. To exit press CTRL+C")
             await asyncio.Future()
