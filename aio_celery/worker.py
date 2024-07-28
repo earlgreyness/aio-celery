@@ -434,12 +434,12 @@ async def run(args: argparse.Namespace) -> None:
     )
 
     async with app.setup():
-        if app.conf.inspection_http_server_is_enabled:
-            server = await asyncio.start_server(
-                inspection_http_handle,
-                host=app.conf.inspection_http_server_host,
-                port=app.conf.inspection_http_server_port,
-            )
+        server = await asyncio.start_server(
+            inspection_http_handle,
+            host=app.conf.inspection_http_server_host,
+            port=app.conf.inspection_http_server_port,
+            start_serving=False,
+        )
 
         semaphore = asyncio.Semaphore(args.concurrency)
         prefetch_count = min(
@@ -448,6 +448,8 @@ async def run(args: argparse.Namespace) -> None:
         )
         connection = await aio_pika.connect_robust(app.conf.broker_url)
         async with server, connection, connection.channel() as channel:
+            if app.conf.inspection_http_server_is_enabled:
+                await server.start_serving()
             if prefetch_count > 0:
                 await channel.set_qos(
                     prefetch_count=prefetch_count,
