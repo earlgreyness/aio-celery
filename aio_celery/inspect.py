@@ -15,10 +15,7 @@ def _get_running_tasks() -> list[dict[str, Any]]:
 
 
 def _collect_running_tasks_statistics() -> dict[str, Any]:
-    running_tasks = sorted(
-        _get_running_tasks(),
-        key=operator.itemgetter("received"),
-    )
+    running_tasks = _get_running_tasks()
 
     def s(t: asyncio.Task[Any]) -> tuple[int, str]:
         n = t.get_name()
@@ -32,26 +29,26 @@ def _collect_running_tasks_statistics() -> dict[str, Any]:
     celery_sleeping_tasks = [t for t in running_tasks if t["state"] == "SLEEPING"]
     celery_semaphore_tasks = [t for t in running_tasks if t["state"] == "SEMAPHORE"]
     celery_running_tasks = [t for t in running_tasks if t["state"] == "RUNNING"]
+    celery_running_tasks.sort(key=operator.itemgetter("started"))
 
     for t in celery_running_tasks:
         del t["received"]
         del t["state"]
         del t["eta"]
-        del t["started"]
 
     return {
+        "asyncio": [repr(t) for t in asyncio_tasks],
+        "celery": celery_running_tasks,
         "stats": {
             "asyncio": len(asyncio_tasks),
             "sleeping": len(celery_sleeping_tasks),
             "semaphore": len(celery_semaphore_tasks),
             "running": len(celery_running_tasks),
         },
-        "celery": celery_running_tasks,
-        "asyncio": [repr(t) for t in asyncio_tasks],
     }
 
 
-async def inspection_http_handle(
+async def inspection_http_handler(
     reader: asyncio.StreamReader,  # noqa: ARG001
     writer: asyncio.StreamWriter,
 ) -> None:
@@ -62,7 +59,6 @@ async def inspection_http_handle(
             _collect_running_tasks_statistics(),
             ensure_ascii=False,
             indent=4,
-            sort_keys=True,
         )
         + "\n"
     ).encode("utf8")

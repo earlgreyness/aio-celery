@@ -5,37 +5,45 @@ import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
+    import asyncio
+
     from .app import Celery
 
 
 @dataclasses.dataclass
 class RunningTask:
+    asyncio_task: asyncio.Task[Any]
     task_id: str
     task_name: str
-
+    state: Literal["SLEEPING", "SEMAPHORE", "RUNNING"]
     received: str
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
+    eta: str | None
+    soft_time_limit: float | None
+    retries: int
     started: str | None = None
 
-    args: tuple[Any, ...] | None = None
-    kwargs: dict[str, Any] | None = None
-    eta: str | None = None
-    soft_time_limit: float | None = None
-
-    state: Literal["SLEEPING", "SEMAPHORE", "RUNNING"] = "SLEEPING"
-
     def serialize(self) -> dict[str, Any]:
-        now = datetime.datetime.now().astimezone()
-
-        result = dataclasses.asdict(self)
-
-        if self.started is not None:
-            result["elapsed"] = (
-                now - datetime.datetime.fromisoformat(self.started)
+        return {
+            "name": self.task_name,
+            "id": self.task_id,
+            "state": self.state,
+            "received": self.received,
+            "started": self.started,
+            "elapsed": (
+                datetime.datetime.now().astimezone()
+                - datetime.datetime.fromisoformat(self.started)
             ).total_seconds()
-        else:
-            result["elapsed"] = None
-
-        return result
+            if self.started is not None
+            else None,
+            "args": self.args,
+            "kwargs": self.kwargs,
+            "eta": self.eta,
+            "soft_time_limit": self.soft_time_limit,
+            "retries": self.retries,
+            "stack": repr(self.asyncio_task.get_stack()),
+        }
 
 
 @dataclasses.dataclass

@@ -22,7 +22,7 @@ from ._state import _STATE, RunningTask
 from .app import Celery
 from .context import CURRENT_ROOT_ID, CURRENT_TASK_ID
 from .exceptions import MaxRetriesExceededError, Retry
-from .inspect import inspection_http_handle
+from .inspect import inspection_http_handler
 from .request import Request
 from .task import Task
 from .utils import first_not_null
@@ -266,15 +266,6 @@ async def on_message_received(
         task_id = str(message.headers["id"])
         task_name = str(message.headers["task"])
 
-        running_task = RunningTask(
-            task_id=task_id,
-            task_name=task_name,
-            received=_iso_now(),
-            state="SLEEPING",
-        )
-        _STATE.running_tasks[task_id] = running_task
-        await asyncio.sleep(0)
-
         CURRENT_ROOT_ID.set(cast(Optional[str], message.headers["root_id"]))
         CURRENT_TASK_ID.set(task_id)
 
@@ -295,17 +286,27 @@ async def on_message_received(
                     _default_retry_delay=annotated_task.default_retry_delay,
                 )
 
-                running_task.args = task.request.args
-                running_task.kwargs = task.request.kwargs
-                running_task.eta = (
-                    task.request.eta.isoformat()
-                    if isinstance(task.request.eta, datetime.datetime)
-                    else None
+                running_task = RunningTask(
+                    asyncio_task=asyncio.current_task(),  # type: ignore[arg-type]
+                    task_id=task_id,
+                    task_name=task_name,
+                    received=_iso_now(),
+                    state="SLEEPING",
+                    args=task.request.args,
+                    kwargs=task.request.kwargs,
+                    eta=(
+                        task.request.eta.isoformat()
+                        if isinstance(task.request.eta, datetime.datetime)
+                        else None
+                    ),
+                    soft_time_limit=_get_soft_time_limit(
+                        task,
+                        annotated_task,
+                    ),
+                    retries=task.request.retries,
                 )
-                running_task.soft_time_limit = _get_soft_time_limit(
-                    task,
-                    annotated_task,
-                )
+                _STATE.running_tasks[task_id] = running_task
+                await asyncio.sleep(0)
 
                 if app.conf.enable_sentry_sdk and sentry_sdk is not None:
                     _setup_sentry_context(task, annotated_task)
@@ -435,7 +436,7 @@ async def run(args: argparse.Namespace) -> None:
 
     async with app.setup():
         server = await asyncio.start_server(
-            inspection_http_handle,
+            inspection_http_handler,
             host=app.conf.inspection_http_server_host,
             port=app.conf.inspection_http_server_port,
             start_serving=False,
