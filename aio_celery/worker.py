@@ -69,7 +69,7 @@ async def _sleep_if_necessary(task: Task) -> None:
     now = datetime.datetime.now().astimezone()
     if eta > now:
         delta: datetime.timedelta = eta - now
-        logger.info(
+        logger.debug(
             "Task %s[%s] Sleeping for %s until task ETA %s ...",
             task.request.task,
             task.request.id,
@@ -77,7 +77,7 @@ async def _sleep_if_necessary(task: Task) -> None:
             eta,
         )
         await asyncio.sleep(delta.total_seconds())
-        logger.info(
+        logger.debug(
             "Task %s[%s] Sleeping FINISHED",
             task.request.task,
             task.request.id,
