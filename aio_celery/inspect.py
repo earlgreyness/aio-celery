@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import email.utils
+import importlib
 import json
 import operator
 import re
+import threading
 from typing import Any
 
 from ._state import _STATE
@@ -36,7 +38,7 @@ def _collect_running_tasks_statistics() -> dict[str, Any]:
         del t["state"]
         del t["eta"]
 
-    return {
+    result = {
         "asyncio": [repr(t) for t in asyncio_tasks],
         "celery": celery_running_tasks,
         "stats": {
@@ -45,7 +47,19 @@ def _collect_running_tasks_statistics() -> dict[str, Any]:
             "semaphore": len(celery_semaphore_tasks),
             "running": len(celery_running_tasks),
         },
+        "threads": [repr(t) for t in threading.enumerate()],
     }
+
+    try:
+        psutil = importlib.import_module("psutil")
+    except ImportError:
+        pass
+    else:
+        this = psutil.Process()
+        result["processes"] = [repr(p) for p in this.children(recursive=True)]
+        result["sockets"] = [repr(c) for c in this.connections(kind="inet")]
+
+    return result
 
 
 async def inspection_http_handler(

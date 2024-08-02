@@ -2,7 +2,7 @@
 
 set -eu
 
-if [[ -z "${PYPI_TOKEN}" ]]; then
+if [[ -z ${PYPI_TOKEN} ]]; then
     echo "Error: environment variable PYPI_TOKEN not set" >&2
     exit 1
 fi

@@ -39,7 +39,7 @@ class Celery:
         self.conf = DefaultConfig()
         self._tasks_registry: dict[str, AnnotatedTask] = {}
         self._app_context: Any = None
-        self._result_backend_connection_pool: (
+        self._result_backend_connection_pool: (  # type: ignore[type-arg]
             redis.asyncio.BlockingConnectionPool | None
         ) = None
         self._broker: Broker | None = None
