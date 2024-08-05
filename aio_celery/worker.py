@@ -22,7 +22,7 @@ from ._state import _STATE, RunningTask
 from .app import Celery
 from .context import CURRENT_ROOT_ID, CURRENT_TASK_ID
 from .exceptions import MaxRetriesExceededError, Retry
-from .inspect import inspection_http_handler
+from .inspection_http_server import inspection_http_handler
 from .intermittent_gc import perform_gc_at_regular_intervals
 from .request import Request
 from .task import Task

@@ -5,7 +5,7 @@ import json
 import time
 from typing import TYPE_CHECKING, Any, Dict, cast
 
-from .exceptions import TimeoutError
+from .exceptions import TimeoutError as CeleryTimeoutError
 
 if TYPE_CHECKING:
     from .app import Celery
@@ -56,6 +56,6 @@ class AsyncResult:
             await asyncio.sleep(interval)
             if timeout is not None and (time.monotonic() - start) > timeout:
                 msg = "The operation timed out."
-                raise TimeoutError(msg)
+                raise CeleryTimeoutError(msg)
             value = await self._get_task_meta()
         return value["result"]
