@@ -235,12 +235,16 @@ async def _execute_task(
                 await message.reject()
             raise
     except Retry as exc:
-        await _handle_task_retry(
-            task=task,
-            annotated_task=annotated_task,
-            app=app,
-            exc=exc,
-        )
+        try:
+            await _handle_task_retry(
+                task=task,
+                annotated_task=annotated_task,
+                app=app,
+                exc=exc,
+            )
+        except MaxRetriesExceededError:
+            await message.reject()
+            raise
     else:
         await _handle_task_result(
             task=task,
@@ -331,11 +335,7 @@ async def on_message_received(
                     await gc_is_paused.wait()
                     running_task.state = "RUNNING"
                     running_task.started = _iso_now()
-                    try:
-                        await _execute_task(task, annotated_task, message)
-                    except MaxRetriesExceededError:
-                        await message.reject()
-                        raise
+                    await _execute_task(task, annotated_task, message)
         except aiormq.exceptions.ChannelInvalidStateError:
             pass
         except Exception:
