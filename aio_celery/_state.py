@@ -15,7 +15,7 @@ class RunningTask:
     asyncio_task: asyncio.Task[Any]
     task_id: str
     task_name: str
-    state: Literal["SLEEPING", "SEMAPHORE", "RUNNING"]
+    state: Literal["SLEEPING", "SEMAPHORE", "GC", "RUNNING"]
     received: str
     args: tuple[Any, ...]
     kwargs: dict[str, Any]
@@ -50,6 +50,7 @@ class RunningTask:
 class _State:
     current_app: Celery | None = None
     running_tasks: dict[str, RunningTask] = dataclasses.field(default_factory=dict)
+    amount_of_tasks_completed_after_last_gc_run: int = 0
 
 
 _STATE = _State()

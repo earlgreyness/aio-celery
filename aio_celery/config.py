@@ -42,6 +42,13 @@ class DefaultConfig:
     inspection_http_server_host: str = "localhost"
     inspection_http_server_port: int = 1430
 
+    # Intermittent Garbage Collection Behavior
+    intermittent_gc_is_enabled: bool = False
+    intermittent_gc_max_tasks_between_gc: int = 100
+    intermittent_gc_max_interval_between_gc: datetime.timedelta = datetime.timedelta(
+        hours=1,
+    )
+
     def update(self, **options: int | bool | str | datetime.timedelta | None) -> None:
         fields = {f.name for f in dataclasses.fields(self.__class__)}
         for k, v in options.items():

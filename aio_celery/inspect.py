@@ -30,6 +30,7 @@ def _collect_running_tasks_statistics() -> dict[str, Any]:
 
     celery_sleeping_tasks = [t for t in running_tasks if t["state"] == "SLEEPING"]
     celery_semaphore_tasks = [t for t in running_tasks if t["state"] == "SEMAPHORE"]
+    celery_gc_tasks = [t for t in running_tasks if t["state"] == "GC"]
     celery_running_tasks = [t for t in running_tasks if t["state"] == "RUNNING"]
     celery_running_tasks.sort(key=operator.itemgetter("started"))
 
@@ -45,6 +46,7 @@ def _collect_running_tasks_statistics() -> dict[str, Any]:
             "asyncio": len(asyncio_tasks),
             "sleeping": len(celery_sleeping_tasks),
             "semaphore": len(celery_semaphore_tasks),
+            "gc": len(celery_gc_tasks),
             "running": len(celery_running_tasks),
         },
         "threads": [repr(t) for t in threading.enumerate()],

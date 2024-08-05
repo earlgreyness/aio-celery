@@ -23,6 +23,7 @@ from .app import Celery
 from .context import CURRENT_ROOT_ID, CURRENT_TASK_ID
 from .exceptions import MaxRetriesExceededError, Retry
 from .inspect import inspection_http_handler
+from .intermittent_gc import perform_gc_at_regular_intervals
 from .request import Request
 from .task import Task
 from .utils import first_not_null
@@ -56,6 +57,8 @@ BANNER = """\
 MAX_AMQP_PREFETCH_COUNT = 65535
 
 logger = logging.getLogger(__name__)
+
+_background_tasks = set()
 
 
 def _iso_now() -> str:
@@ -258,6 +261,7 @@ async def on_message_received(
     *,
     app: Celery,
     semaphore: asyncio.Semaphore,
+    gc_is_paused: asyncio.Event,
 ) -> None:
     with contextlib.ExitStack() as stack:
         if app.conf.enable_sentry_sdk and sentry_sdk is not None:
@@ -323,6 +327,8 @@ async def on_message_received(
                 running_task.state = "SEMAPHORE"
 
                 async with semaphore:
+                    running_task.state = "GC"
+                    await gc_is_paused.wait()
                     running_task.state = "RUNNING"
                     running_task.started = _iso_now()
                     await _execute_task(task, annotated_task, message)
@@ -338,6 +344,7 @@ async def on_message_received(
                 task_id,
             )
         finally:
+            _STATE.amount_of_tasks_completed_after_last_gc_run += 1
             with contextlib.suppress(KeyError):
                 del _STATE.running_tasks[task_id]
             await asyncio.sleep(0)
@@ -434,6 +441,19 @@ async def run(args: argparse.Namespace) -> None:
         app,
     )
 
+    gc_is_paused = asyncio.Event()
+    gc_is_paused.set()
+    if app.conf.intermittent_gc_is_enabled:
+        gc_task = asyncio.create_task(
+            perform_gc_at_regular_intervals(
+                max_tasks_between_gc=app.conf.intermittent_gc_max_tasks_between_gc,
+                max_interval_between_gc=app.conf.intermittent_gc_max_interval_between_gc,
+                gc_is_paused=gc_is_paused,
+            ),
+        )
+        _background_tasks.add(gc_task)
+        gc_task.add_done_callback(_background_tasks.discard)
+
     async with app.setup():
         server = await asyncio.start_server(
             inspection_http_handler,
@@ -469,6 +489,7 @@ async def run(args: argparse.Namespace) -> None:
                         on_message_received,
                         app=app,
                         semaphore=semaphore,
+                        gc_is_paused=gc_is_paused,
                     ),
                     timeout=app.conf.broker_publish_timeout,
                 )
