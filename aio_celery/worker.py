@@ -331,7 +331,11 @@ async def on_message_received(
                     await gc_is_paused.wait()
                     running_task.state = "RUNNING"
                     running_task.started = _iso_now()
-                    await _execute_task(task, annotated_task, message)
+                    try:
+                        await _execute_task(task, annotated_task, message)
+                    except MaxRetriesExceededError:
+                        await message.reject()
+                        raise
         except aiormq.exceptions.ChannelInvalidStateError:
             pass
         except Exception:
