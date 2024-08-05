@@ -26,6 +26,7 @@ def main() -> None:
     new_version = f"{major}.{minor + 1}.{patch}"
 
     file.write_text(pattern.sub(f'__version__ = "{new_version}"', content))
+    fork("/usr/bin/git", "add", str(file))
     fork("/usr/bin/git", "commit", "-m", f"Bump version to {new_version}")
     fork("/usr/bin/git", "push")
     fork("./publish.sh")
