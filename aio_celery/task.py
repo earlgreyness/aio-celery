@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class Task:
     app: Celery
     request: Request
-    _default_retry_delay: int = dataclasses.field(repr=False)
+    _default_retry_delay: float = dataclasses.field(repr=False)
 
     @property
     def name(self) -> str:

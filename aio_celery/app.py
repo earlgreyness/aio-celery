@@ -116,7 +116,7 @@ class Celery:
         name: str | None = None,
         ignore_result: bool | None = None,
         max_retries: int | None = 3,
-        default_retry_delay: int = 180,
+        default_retry_delay: float = 180,
         autoretry_for: tuple[type[Exception], ...] = (),
         queue: str | None = None,
         priority: int | None = None,

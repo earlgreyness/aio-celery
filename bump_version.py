@@ -12,6 +12,8 @@ def fork(*command: str) -> None:
 
 
 def main() -> None:
+    fork("./lint.sh")
+
     file = pathlib.Path("./aio_celery/__init__.py")
     content = file.read_text(encoding="utf8")
     pattern = re.compile(r"__version__ = \"(\d+)\.(\d+)\.(\d+)\"")
