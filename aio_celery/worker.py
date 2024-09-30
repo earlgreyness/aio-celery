@@ -26,7 +26,7 @@ from .inspection_http_server import inspection_http_handler
 from .intermittent_gc import perform_gc_at_regular_intervals
 from .request import Request
 from .task import Task
-from .utils import first_not_null
+from .utils import first_not_null, generate_consumer_tag
 
 if TYPE_CHECKING:
     import argparse
@@ -488,6 +488,13 @@ async def run(args: argparse.Namespace) -> None:
                 for name in queue_names
             ]
             for queue in queues:
+                if app.conf.worker_consumer_tag_prefix:
+                    consumer_tag = generate_consumer_tag(
+                        prefix=app.conf.worker_consumer_tag_prefix,
+                        channel_number=1,
+                    )
+                else:
+                    consumer_tag = None
                 await queue.consume(
                     functools.partial(
                         on_message_received,
@@ -495,6 +502,7 @@ async def run(args: argparse.Namespace) -> None:
                         semaphore=semaphore,
                         gc_is_paused=gc_is_paused,
                     ),
+                    consumer_tag=consumer_tag,
                     timeout=app.conf.broker_publish_timeout,
                 )
             logger.info("Waiting for messages. To exit press CTRL+C")

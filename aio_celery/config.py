@@ -26,6 +26,7 @@ class DefaultConfig:
     broker_url: str = "amqp://guest:guest@localhost:5672//"
 
     # Worker
+    worker_consumer_tag_prefix: str = ""
     worker_prefetch_multiplier: int = 4
     # Raison d'être:
     # The asyncio.timeout() context manager is what transforms
