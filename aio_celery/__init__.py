@@ -5,7 +5,7 @@ from .app import Celery, shared_task
 from .canvas import chain, signature
 from .task import Task
 
-__version__ = "0.17.0"
+__version__ = "0.18.0"
 
 __all__ = (
     "Celery",
