@@ -7,6 +7,8 @@ from ._state import get_current_app
 from .utils import first_not_null
 
 if TYPE_CHECKING:
+    import datetime
+
     from .app import Celery
     from .result import AsyncResult
 
@@ -55,6 +57,7 @@ class Signature(dict[str, Any]):
         countdown: float | None = None,
         priority: int | None = None,
         queue: str | None = None,
+        expiration: datetime.datetime | datetime.timedelta | float | None = None,
     ) -> AsyncResult:
         sig: Signature = self
         chain_: list[dict[str, Any]] | None = None
@@ -74,6 +77,7 @@ class Signature(dict[str, Any]):
             priority=first_not_null(priority, options.get("priority")),
             queue=first_not_null(queue, options.get("queue")),
             chain=chain_,
+            expiration=first_not_null(expiration, options.get("expiration")),
         )
 
     async def delay(self, *args: Any, **kwargs: Any) -> AsyncResult:

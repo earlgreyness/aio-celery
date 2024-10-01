@@ -84,6 +84,7 @@ class Task:
             self.app.conf.task_default_queue,
         )
         reply_to: str = first_not_null(opts.get("reply_to"), "")
+        expiration = opts.get("expiration")
         return (
             create_task_message(
                 task_id=new_task_id,
@@ -95,6 +96,7 @@ class Task:
                 root_id=self.request.root_id,
                 chain=new_chain,
                 reply_to=reply_to,
+                expiration=expiration,
             ),
             routing_key,
         )

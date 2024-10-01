@@ -28,6 +28,8 @@ from .result import AsyncResult as _AsyncResult
 from .utils import first_not_null
 
 if TYPE_CHECKING:
+    import datetime
+
     import redis.asyncio
 
 logger = logging.getLogger(__name__)
@@ -187,6 +189,7 @@ class Celery:
         priority: int | None = None,
         queue: str | None = None,
         chain: list[dict[str, Any]] | None = None,
+        expiration: datetime.datetime | datetime.timedelta | float | None = None,
     ) -> _AsyncResult:
         if task_id is None:
             task_id = str(uuid.uuid4())
@@ -201,6 +204,7 @@ class Celery:
                 parent_id=CURRENT_TASK_ID.get(),
                 root_id=CURRENT_ROOT_ID.get(),
                 chain=chain,
+                expiration=expiration,
             ),
             routing_key=first_not_null(queue, self.conf.task_default_queue),
         )

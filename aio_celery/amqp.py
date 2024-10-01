@@ -20,6 +20,7 @@ def create_task_message(  # noqa: PLR0913
     ignore_result: bool = False,
     countdown: float | None = None,
     reply_to: str = "",
+    expiration: datetime.datetime | datetime.timedelta | float | None = None,
 ) -> Message:
     args = args or ()
     kwargs = kwargs or {}
@@ -71,4 +72,5 @@ def create_task_message(  # noqa: PLR0913
         priority=priority,
         correlation_id=task_id,
         reply_to=reply_to,  # optional
+        expiration=expiration,
     )
