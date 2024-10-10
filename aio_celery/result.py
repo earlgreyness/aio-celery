@@ -46,7 +46,7 @@ class AsyncResult:
 
     async def get(
         self,
-        timeout: float | None = None,  # noqa: ASYNC109
+        timeout: float | None = None,
         interval: float = 0.5,
     ) -> Any:
         """Wait until task is ready, and return its result."""

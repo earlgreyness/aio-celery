@@ -4,12 +4,15 @@ import asyncio
 import email.utils
 import importlib
 import json
+import logging
 import operator
 import re
 import threading
 from typing import Any
 
 from ._state import _STATE
+
+logger = logging.getLogger(__name__)
 
 
 def _get_running_tasks() -> list[dict[str, Any]]:
@@ -65,34 +68,43 @@ def _collect_running_tasks_statistics() -> dict[str, Any]:
 
 
 async def inspection_http_handler(
-    reader: asyncio.StreamReader,  # noqa: ARG001
+    reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
 ) -> None:
-    date: str = email.utils.formatdate(timeval=None, localtime=False, usegmt=True)
+    try:
+        date: str = email.utils.formatdate(timeval=None, localtime=False, usegmt=True)
+        content: bytes = b"{}\n"
 
-    content: bytes = (
-        json.dumps(
-            _collect_running_tasks_statistics(),
-            ensure_ascii=False,
-            indent=4,
-        )
-        + "\n"
-    ).encode("utf8")
+        first_line: bytes = await reader.readuntil(separator=b"\r\n")
+        match = re.search(rb"^GET (/.*) HTTP/", first_line)
+        if match and match.group(1) == b"/health":
+            pass
+        else:
+            content = (
+                json.dumps(
+                    _collect_running_tasks_statistics(),
+                    ensure_ascii=False,
+                    indent=4,
+                )
+                + "\n"
+            ).encode("utf8")
 
-    lines: list[bytes] = [
-        b"HTTP/1.1 200 OK\r\n",
-        b"Server: aio-celery\r\n",
-        b"Date: " + date.encode("latin1") + b"\r\n",
-        b"Content-Type: application/json; charset=utf-8\r\n",
-        b"Content-Length: " + str(len(content)).encode("latin1") + b"\r\n",
-        b"\r\n",
-        content,
-    ]
+        lines: list[bytes] = [
+            b"HTTP/1.1 200 OK\r\n",
+            b"Server: aio-celery\r\n",
+            b"Date: " + date.encode("latin1") + b"\r\n",
+            b"Content-Type: application/json; charset=utf-8\r\n",
+            b"Content-Length: " + str(len(content)).encode("latin1") + b"\r\n",
+            b"\r\n",
+            content,
+        ]
 
-    for line in lines:
-        writer.write(line)
-    writer.write_eof()
+        for line in lines:
+            writer.write(line)
+        writer.write_eof()
 
-    await writer.drain()
+        await writer.drain()
 
-    writer.close()
+        writer.close()
+    except Exception:
+        logger.exception("Could not handle HTTP request to inspection server")
