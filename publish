@@ -11,7 +11,7 @@ fi
 source ./venv/bin/activate
 
 echo "Building aio_celery..."
-if [ -d dist ]; then
+if [[ -d dist ]]; then
     rm dist/*
 fi
 python3 -m build
