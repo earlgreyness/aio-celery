@@ -11,7 +11,9 @@ fi
 source ./venv/bin/activate
 
 echo "Building aio_celery..."
-rm dist/*
+if [ -d dist ]; then
+    rm dist/*
+fi
 python3 -m build
 
 echo "Uploading aio_celery to PyPI (pypi.org)..."
