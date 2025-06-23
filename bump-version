@@ -12,7 +12,12 @@ def fork(*command: str) -> None:
 
 
 def main() -> None:
-    fork("./lint.sh")
+    fork("./lint")
+    fork(
+        "/bin/sh",
+        "-c",
+        'git diff --quiet && git diff --cached --quiet && [ -z "$(git ls-files --others --exclude-standard)" ]',  # noqa: E501
+    )
 
     file = pathlib.Path("./aio_celery/__init__.py")
     content = file.read_text(encoding="utf8")
@@ -28,10 +33,10 @@ def main() -> None:
     new_version = f"{major}.{minor + 1}.{patch}"
 
     file.write_text(pattern.sub(f'__version__ = "{new_version}"', content))
-    fork("/usr/bin/git", "add", str(file))
-    fork("/usr/bin/git", "commit", "-m", f"Bump version to {new_version}")
-    fork("/usr/bin/git", "push")
-    fork("./publish.sh")
+    fork("git", "add", str(file))
+    fork("git", "commit", "-m", f"Bump version to {new_version}")
+    fork("git", "push")
+    fork("./publish")
 
 
 if __name__ == "__main__":

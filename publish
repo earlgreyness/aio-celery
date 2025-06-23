@@ -1,6 +1,7 @@
 #!/bin/bash
 
-set -eu
+set -e
+set -u
 
 if [[ -z ${PYPI_TOKEN} ]]; then
     echo "Error: environment variable PYPI_TOKEN not set" >&2

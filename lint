@@ -3,9 +3,16 @@
 set -e
 set -x
 
-ruff format --check --diff --quiet .
-ruff check --diff .
-ruff check .
-mypy .
-find . -type f -name '*.sh' -not -path "./venv/*" -exec shellcheck -x {} +
-find . -type f -name '*.sh' -not -path "./venv/*" -exec shfmt -d -i 4 -ci -bn -s {} +
+check_sh_scripts() {
+    find . -type f -name '*.sh' \
+        -not -path './venv/*' \
+        -exec "$@" {} +
+    "$@" ./fix ./lint ./publish
+}
+
+ruff format --check --diff --quiet . ./bump-version
+ruff check --diff . ./bump-version
+ruff check . ./bump-version
+mypy . ./bump-version
+check_sh_scripts shellcheck
+check_sh_scripts shfmt --diff --indent=4 --simplify
