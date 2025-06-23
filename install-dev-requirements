@@ -3,8 +3,10 @@
 set -ex
 
 pip install --upgrade \
+    build \
     mypy \
     ruff \
+    twine \
     types-psutil \
     types-redis
 

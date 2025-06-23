@@ -14,14 +14,13 @@ echo "Building aio_celery..."
 if [[ -d dist ]]; then
     rm dist/*
 fi
+python3 -m pip install --upgrade build twine
 python3 -m build
 
 echo "Uploading aio_celery to PyPI (pypi.org)..."
 expect <<EOF
 spawn python3 -m twine upload dist/*
-expect "Enter your username: "
-send "__token__\r"
-expect "Enter your password: "
+expect "Enter your API token: "
 send "${PYPI_TOKEN}\n\r"
 expect {
     "ERROR" {

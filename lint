@@ -7,7 +7,7 @@ check_sh_scripts() {
     find . -type f -name '*.sh' \
         -not -path './venv/*' \
         -exec "$@" {} +
-    "$@" ./fix ./lint ./publish
+    "$@" ./fix ./install-dev-requirements ./lint ./publish
 }
 
 ruff format --check --diff --quiet . ./bump-version
