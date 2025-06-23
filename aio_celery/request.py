@@ -32,7 +32,7 @@ class Request:
     def from_message(cls: type[Request], message: IncomingMessage) -> Request:
         headers = message.headers
         args, kwargs, options = json.loads(message.body)
-        raw_eta = cast(Optional[str], headers["eta"])
+        raw_eta = cast("Optional[str]", headers["eta"])
         eta: datetime.datetime | None
         if raw_eta is not None:
             if sys.version_info >= (3, 11):
@@ -49,14 +49,14 @@ class Request:
             id=str(headers["id"]),
             args=args,
             kwargs=kwargs,
-            task=cast(str, headers["task"]),
-            retries=cast(int, headers["retries"]),
+            task=cast("str", headers["task"]),
+            retries=cast("int", headers["retries"]),
             eta=eta,
-            parent_id=cast(Optional[str], headers["parent_id"]),
-            group=cast(Optional[str], headers["group"]),
-            root_id=cast(str, headers["root_id"]),
+            parent_id=cast("Optional[str]", headers["parent_id"]),
+            group=cast("Optional[str]", headers["group"]),
+            root_id=cast("str", headers["root_id"]),
             ignore_result=bool(headers["ignore_result"]),
-            timelimit=cast(Tuple[Optional[int], Optional[int]], headers["timelimit"]),
+            timelimit=cast("Tuple[Optional[int], Optional[int]]", headers["timelimit"]),
             chain=options["chain"],
         )
 

@@ -15,7 +15,6 @@ from typing import (
 )
 
 import aio_pika
-from aio_pika.abc import AbstractRobustChannel
 
 from ._state import set_current_app
 from .amqp import create_task_message
@@ -31,6 +30,7 @@ if TYPE_CHECKING:
     import datetime
 
     import redis.asyncio
+    from aio_pika.abc import AbstractRobustChannel
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ class Celery:
                 broker_url=self.conf.broker_url,
                 broker_publish_timeout=self.conf.broker_publish_timeout,
                 task_queue_max_priority=self.conf.task_queue_max_priority,
-                publishing_channel=cast(AbstractRobustChannel, publishing_channel),
+                publishing_channel=cast("AbstractRobustChannel", publishing_channel),
             )
             set_current_app(self)
             try:
@@ -163,7 +163,7 @@ class Celery:
 
     def _construct_extended_task_registry(self) -> dict[str, AnnotatedTask]:
         registry: dict[str, AnnotatedTask] = {}
-        for name, task in _SHARED_APP._tasks_registry.items():  # noqa: SLF001
+        for name, task in _SHARED_APP._tasks_registry.items():
             task.app = self
             registry[name] = task
         registry.update(self._tasks_registry)

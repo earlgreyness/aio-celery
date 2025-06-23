@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from .result import AsyncResult
 
 
-class Signature(dict[str, Any]):
+class Signature(dict[str, Any]):  # noqa: FURB189
     def __init__(
         self,
         task: str,

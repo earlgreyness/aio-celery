@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 strict = true
 exclude = [
     "^do.py",
+    "^venv/",
 ]
 
 [tool.ruff]

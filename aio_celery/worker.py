@@ -10,12 +10,12 @@ import logging
 import pathlib
 import sys
 import time
+import traceback
 import urllib.parse
 from typing import TYPE_CHECKING, Any, Awaitable, Iterator, Optional, cast
 
 import aio_pika
 import aiormq.exceptions
-from aio_pika.abc import AbstractRobustChannel
 from yarl import URL
 
 from ._state import _STATE, RunningTask
@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     import types
 
     from aio_pika import IncomingMessage
+    from aio_pika.abc import AbstractRobustChannel
 
     from .annotated_task import AnnotatedTask
 
@@ -87,24 +88,46 @@ async def _sleep_if_necessary(task: Task) -> None:
         )
 
 
-async def _handle_task_result(
+async def _handle_task_success(
     task: Task,
     annotated_task: AnnotatedTask,
     result: Any,
 ) -> None:
-    if (
-        task.app.conf.task_ignore_result
-        or annotated_task.ignore_result
-        or task.request.ignore_result
-    ):
-        pass
-    else:
+    ignore_result = first_not_null(
+        annotated_task.ignore_result,
+        task.app.conf.task_ignore_result,
+    )
+    if not ignore_result:
         await task.update_state(state="SUCCESS", meta=result, _finalize=True)
     next_message, next_routing_key = task.build_next_task_message(result=result)
     if next_message is not None:
         await task.app.broker.publish_message(
             next_message,
             routing_key=next_routing_key,
+        )
+
+
+async def _handle_task_failure(
+    task: Task,
+    annotated_task: AnnotatedTask,
+    exception: Exception,
+    traceback_: str,
+) -> None:
+    ignore_result = first_not_null(
+        annotated_task.ignore_result,
+        task.app.conf.task_ignore_result,
+    )
+    if not ignore_result:
+        meta = {
+            "exc_message": [str(exception)],
+            "exc_module": type(exception).__module__,
+            "exc_type": type(exception).__name__,
+        }
+        await task.update_state(
+            state="FAILURE",
+            meta=meta,
+            _traceback=traceback_,
+            _finalize=True,
         )
 
 
@@ -132,11 +155,17 @@ async def _handle_task_retry(
         exc.message,
         routing_key=(task.request.message.routing_key or app.conf.task_default_queue),
     )
+    ignore_result = first_not_null(
+        annotated_task.ignore_result,
+        task.app.conf.task_ignore_result,
+    )
+    if not ignore_result:
+        await task.update_state(state="RETRY", meta={})
 
 
 def _get_soft_time_limit(task: Task, annotated_task: AnnotatedTask) -> float | None:
     return cast(
-        Optional[float],
+        "Optional[float]",
         first_not_null(
             task.request.timelimit[0],
             annotated_task.soft_time_limit,
@@ -171,7 +200,7 @@ async def _run_with_timeout(coro: Awaitable[Any], soft_time_limit: float | None)
 
 
 def _log_unregistered_task(message: IncomingMessage) -> None:
-    logger.exception(
+    logger.exception(  # noqa: LOG004
         "Received unregistered task of type %r\n"
         "The message has been ignored and discarded.\n\n"
         "Did you remember to import the module containing this task?\n"
@@ -214,50 +243,54 @@ async def _execute_task(
     timestamp_start = time.monotonic()
     try:
         try:
-            result = await _run_with_timeout(
-                annotated_task.fn(*args, **task.request.kwargs),
-                _get_soft_time_limit(task, annotated_task),
-            )
-        except Retry:
-            raise
-        except Exception as exc:
-            if isinstance(exc, annotated_task.autoretry_for) or (
-                isinstance(exc, asyncio.TimeoutError)
-                and app.conf.worker_retry_task_on_asyncio_timeout_error
-            ):
-                logger.warning(
-                    "Task %s[%s] raised asyncio.TimeoutError, retrying...",
-                    task.name,
-                    task.request.id,
+            try:
+                result = await _run_with_timeout(
+                    annotated_task.fn(*args, **task.request.kwargs),
+                    _get_soft_time_limit(task, annotated_task),
                 )
-                await task.retry()
-            else:
-                await message.reject()
-            raise
-    except Retry as exc:
-        try:
+            except Retry:
+                raise
+            except Exception as exc:
+                if isinstance(exc, annotated_task.autoretry_for) or (
+                    isinstance(exc, asyncio.TimeoutError)
+                    and app.conf.worker_retry_task_on_asyncio_timeout_error
+                ):
+                    logger.warning(
+                        "Task %s[%s] raised asyncio.TimeoutError, retrying...",
+                        task.name,
+                        task.request.id,
+                    )
+                    await task.retry()
+                raise
+        except Retry as exc:
             await _handle_task_retry(
                 task=task,
                 annotated_task=annotated_task,
                 app=app,
                 exc=exc,
             )
-        except MaxRetriesExceededError:
-            await message.reject()
-            raise
-    else:
-        await _handle_task_result(
-            task=task,
-            annotated_task=annotated_task,
-            result=result,
+        else:
+            await _handle_task_success(
+                task=task,
+                annotated_task=annotated_task,
+                result=result,
+            )
+            logger.info(
+                "Task %s[%s] succeeded in %.6fs: %r",
+                task.name,
+                task.request.id,
+                time.monotonic() - timestamp_start,
+                result,
+            )
+    except Exception as exception:
+        await message.reject(requeue=False)
+        await _handle_task_failure(
+            task,
+            annotated_task,
+            exception,
+            traceback.format_exc(),
         )
-        logger.info(
-            "Task %s[%s] succeeded in %.6fs: %r",
-            task.name,
-            task.request.id,
-            time.monotonic() - timestamp_start,
-            result,
-        )
+        raise
 
 
 async def on_message_received(
@@ -274,7 +307,7 @@ async def on_message_received(
         task_id = str(message.headers["id"])
         task_name = str(message.headers["task"])
 
-        CURRENT_ROOT_ID.set(cast(Optional[str], message.headers["root_id"]))
+        CURRENT_ROOT_ID.set(cast("Optional[str]", message.headers["root_id"]))
         CURRENT_TASK_ID.set(task_id)
 
         logger.info("Task %s[%s] received", task_name, task_id)
@@ -483,7 +516,7 @@ async def run(args: argparse.Namespace) -> None:
             queues = [
                 await app.broker.declare_queue(
                     queue_name=name,
-                    channel=cast(AbstractRobustChannel, channel),
+                    channel=cast("AbstractRobustChannel", channel),
                 )
                 for name in queue_names
             ]

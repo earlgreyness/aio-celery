@@ -34,7 +34,7 @@ class AsyncResult:
             if value is None:
                 return {"result": None, "status": "PENDING"}
             self._cache = json.loads(value)
-        return cast(Dict[str, Any], self._cache)
+        return cast("Dict[str, Any]", self._cache)
 
     @property
     async def result(self) -> Any:

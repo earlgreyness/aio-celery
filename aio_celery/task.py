@@ -36,8 +36,9 @@ class Task:
         self,
         *,
         state: str,
-        meta: dict[str, Any],
+        meta: Any,
         _finalize: bool = False,
+        _traceback: str | None = None,
     ) -> None:
         result_backend = self.app.result_backend
         if result_backend is None:
@@ -49,7 +50,7 @@ class Task:
         payload: dict[str, Any] = {
             "status": state,
             "result": meta,
-            "traceback": None,
+            "traceback": _traceback,
             "children": [],
             "date_done": None,
             "task_id": self.request.id,
